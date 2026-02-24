@@ -791,7 +791,7 @@ def compute_optimal_token_baseline_advantage(
             None if not using IS
         handle_zero_tail: If True, zero baselines will be set in the portion of the longest trajectory
             that extends beyond the second-longest trajectory in the prompt group.
-            Default: False
+            Default: True
         epsilon: Small constant for numerical stability (default: 1e-8)
 
     Returns:
