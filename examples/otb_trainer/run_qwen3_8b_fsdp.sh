@@ -21,8 +21,8 @@ NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 
 adv_estimator=${ADV_ESTIMATOR:-optimal_token_baseline}
 
-train_batch_size=${TRAIN_BATCH_SIZE:-128}
-ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE:-128}
+train_batch_size=${TRAIN_BATCH_SIZE:-64}
+ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE:-64}
 max_prompt_length=${MAX_PROMPT_LENGTH:-1024}
 max_response_length=${MAX_RESPONSE_LENGTH:-2048}
 ppo_max_token_len_per_gpu=${PPO_MAX_TOKEN_LEN_PER_GPU:-24576}
@@ -119,7 +119,6 @@ export WANDB_DIR=$output_path
 export TENSORBOARD_DIR=$output_path
 
 python3 -m verl.trainer.main_ppo \
-    hydra.run.dir="$output_path" \
     "${DATA[@]}" \
     "${MODEL[@]}" \
     "${ACTOR[@]}" \
