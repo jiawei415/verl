@@ -3,8 +3,19 @@
 
 set -xeuo pipefail
 
+export VLLM_USE_V1=1
+export WANDB_OFFICIAL=1
+export WANDB_API_KEY=2e430da03653e9b9961aaa2a0facadd7fe45204a
+export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
+export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+
+HDFS_PATH=/mnt/hdfs/byte_data_seed/hdd_hldy/user/xujiawei.415
+MODEL_PATH=$HDFS_PATH/hf_models
+DATA_PATH=$HDFS_PATH/hf_datasets
+CKPT_PATH=$HDFS_PATH/checkpoints
+
 # ---- user-adjustable ----
-MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
+MODEL_PATH=$MODEL_PATH/Qwen3-8B-Base
 NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 
@@ -29,12 +40,13 @@ test_freq=${TEST_FREQ:-5}
 
 project_name=${PROJECT_NAME:-verl_otb_gsm8k_math}
 experiment_name=${EXPERIMENT_NAME:-qwen3_8b_vllm_fsdp}
+output_path=${OUTPUT_PATH:-$CKPT_PATH/$project_name/$experiment_name}
 # ---- end user-adjustable ----
 
-gsm8k_train=$HOME/data/gsm8k/train.parquet
-gsm8k_test=$HOME/data/gsm8k/test.parquet
-math_train=$HOME/data/math/train.parquet
-math_test=$HOME/data/math/test.parquet
+gsm8k_train=$DATA_PATH/gsm8k/train.parquet
+gsm8k_test=$DATA_PATH/gsm8k/test.parquet
+math_train=$DATA_PATH/MATH-lighteval/train.parquet
+math_test=$DATA_PATH/MATH-lighteval/test.parquet
 
 train_files="['$gsm8k_train', '$math_train']"
 val_files="['$gsm8k_test', '$math_test']"
@@ -86,6 +98,7 @@ REF=(
 )
 
 TRAINER=(
+    trainer.default_local_dir="$output_path"
     trainer.balance_batch=True
     trainer.critic_warmup=0
     trainer.logger='["console","wandb"]'
@@ -102,7 +115,11 @@ EXTRA=(
 )
 
 ########################### launch ###########################
+export WANDB_DIR=$output_path
+export TENSORBOARD_DIR=$output_path
+
 python3 -m verl.trainer.main_ppo \
+    hydra.run.dir="$output_path" \
     "${DATA[@]}" \
     "${MODEL[@]}" \
     "${ACTOR[@]}" \
