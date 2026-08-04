@@ -41,11 +41,7 @@ def default_compute_score(
     Raises:
         NotImplementedError: If the reward function is not implemented for the given data source.
     """
-    if data_source == "openai/gsm8k":
-        from . import gsm8k
-
-        res = gsm8k.compute_score(solution_str, ground_truth)
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500"]:
+    if data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval"]:
         from . import math_reward
 
         res = math_reward.compute_score(solution_str, ground_truth)
@@ -56,10 +52,24 @@ def default_compute_score(
 
         # from . import math_verify
         # res = math_verify.compute_score(solution_str, ground_truth)
-    elif data_source in ["math_dapo", "math", "math_dapo_reasoning"] or data_source.startswith("aime"):
+    elif (
+        data_source
+        in [
+            "math_dapo",
+            "math",
+            "math_dapo_reasoning",
+            "openai/gsm8k",
+            "HuggingFaceH4/MATH-500",
+        ]
+        or "aime" in data_source
+    ):
         from . import math_dapo
 
-        res = math_dapo.compute_score(solution_str, ground_truth)
+        res = math_dapo.compute_score(solution_str, ground_truth, strict_box_verify=True)
+        # is_correct_strict_box returns pred=None when no \boxed is found; downstream
+        # metric aggregation cannot handle None, so coerce to a sentinel string.
+        if isinstance(res, dict) and res.get("pred") is None:
+            res["pred"] = "[INVALID]"
     elif data_source in [
         "numina_aops_forum",
         "numina_synthetic_math",

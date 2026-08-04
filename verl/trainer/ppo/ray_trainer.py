@@ -732,7 +732,7 @@ class RayPPOTrainer:
                     if (
                         (var_name == core_var)
                         and any(metric_name.startswith(pfx) for pfx in ["mean", "maj", "best"])
-                        and (f"@{n_max}" in metric_name)
+                        and (f"@{n_max}" in metric_name or metric_name == "mean@1")
                     ):
                         metric_sec = "val-core"
                     else:

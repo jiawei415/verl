@@ -646,6 +646,9 @@ def process_validation_metrics(
 
                 if n_resps > 1:
                     metric[f"std@{n_resps}"] = float(np_std(var_vals))
+                    # First-response-only baseline: what the metric would be if we
+                    # generated a single response per prompt (deterministic, no bootstrap).
+                    metric["mean@1"] = float(var_vals[0])
 
                     # cache ns list
                     if n_resps not in ns_cache:
