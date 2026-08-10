@@ -44,7 +44,10 @@ project_name=${PROJECT_NAME:-verl_test}
 experiment_name=${EXPERIMENT_NAME:-verl_exp}
 
 # ---- Model / rollout / checkpoint defaults (algo scripts may override) ----
-MODEL_PATH=${MODEL_PATH:-$MODEL_ROOT/Qwen3-8B-Base}
+# MODEL_NAME: short name under $MODEL_ROOT (e.g. Qwen3-8B-Base). If set, wins
+# over MODEL_PATH default. MODEL_PATH still overrides both if set explicitly.
+MODEL_NAME=${MODEL_NAME:-Qwen3-8B-Base}
+MODEL_PATH=${MODEL_PATH:-$MODEL_ROOT/$MODEL_NAME}
 rollout_tp=${ROLLOUT_TP:-2}
 rollout_gpu_mem_util=${ROLLOUT_GPU_MEM_UTIL:-0.75}
 rollout_n=${ROLLOUT_N:-8}

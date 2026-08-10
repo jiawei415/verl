@@ -1,4 +1,5 @@
 # Copyright 2025 Bytedance Ltd. and/or its affiliates
+# Copyright 2025 Bytedance Ltd. and/or its affiliates
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,6 +45,31 @@ SPEC_DECODE_EXTRA_KEYS = (
     "spec_num_accepted_tokens",
     "spec_num_verify_steps",
 )
+
+
+# Debug: only log the first N trajectories globally to avoid spam.
+# Set TOOL_AGENT_DEBUG_MAX=0 to disable, negative for unlimited.
+_TOOL_AGENT_DEBUG_MAX = int(os.getenv("TOOL_AGENT_DEBUG_MAX", "1"))
+_TOOL_AGENT_LOGGED: dict[str, int] = {}
+
+
+def _dbg_enabled(request_id: str) -> bool:
+    """True if this request_id is one of the first N we're allowed to log."""
+    if _TOOL_AGENT_DEBUG_MAX == 0:
+        return False
+    if _TOOL_AGENT_DEBUG_MAX < 0:
+        return True
+    if request_id in _TOOL_AGENT_LOGGED:
+        return True
+    if len(_TOOL_AGENT_LOGGED) < _TOOL_AGENT_DEBUG_MAX:
+        _TOOL_AGENT_LOGGED[request_id] = len(_TOOL_AGENT_LOGGED)
+        return True
+    return False
+
+
+def _dbg_tag(request_id: str) -> str:
+    idx = _TOOL_AGENT_LOGGED.get(request_id, -1)
+    return f"[dbg#{idx}]"
 
 
 class AgentState(Enum):
@@ -124,6 +150,15 @@ class ToolAgentLoop(AgentLoopBase):
     @rollout_trace_op
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         messages = list(kwargs["raw_prompt"])
+        request_id = uuid4().hex
+        _dbg = _dbg_enabled(request_id)
+        _tag = _dbg_tag(request_id)
+        if _dbg:
+            print(
+                f"{_tag} run start; n_msgs={len(messages)} tools={list(self.tools.keys())} "
+                f"max_user_turns={self.max_user_turns} max_assistant_turns={self.max_assistant_turns}",
+                flush=True,
+            )
 
         # extract multimodal inputs from messages
         multi_modal_data = await self.process_multi_modal_info(messages)
@@ -132,8 +167,7 @@ class ToolAgentLoop(AgentLoopBase):
         audios = multi_modal_data.get("audios")
         mm_processor_kwargs = self._get_mm_processor_kwargs(audios)
 
-        metrics = {}
-        request_id = uuid4().hex
+        metrics = {} 
         tools_kwargs = kwargs.get("tools_kwargs", {})
 
         agent_data = AgentData(
@@ -203,6 +237,14 @@ class ToolAgentLoop(AgentLoopBase):
             extra_fields=agent_data.extra_fields,
         )
         output.extra_fields.update({"turn_scores": agent_data.turn_scores, "tool_rewards": agent_data.tool_rewards})
+        if _dbg_enabled(agent_data.request_id):
+            _tag = _dbg_tag(agent_data.request_id)
+            print(
+                f"{_tag} run done asst={agent_data.assistant_turns} "
+                f"user={agent_data.user_turns} num_turns={output.num_turns} "
+                f"msgs={len(agent_data.messages)}",
+                flush=True,
+            )
         return output
 
     async def _handle_pending_state(self, agent_data: AgentData, sampling_params: dict[str, Any]) -> AgentState:
@@ -266,22 +308,59 @@ class ToolAgentLoop(AgentLoopBase):
         if output.routed_experts is not None:
             agent_data.routed_experts = output.routed_experts
 
+        # Debug: decode + summarize this turn's assistant text.
+        _dbg = _dbg_enabled(agent_data.request_id)
+        _tag = _dbg_tag(agent_data.request_id)
+        if _dbg:
+            try:
+                _resp_text = self.tokenizer.decode(agent_data.response_ids, skip_special_tokens=False)
+            except Exception:  # noqa: BLE001
+                _resp_text = "<decode_error>"
+            _arrow = " ↵ "
+            _has_tc = "<tool_call>" in _resp_text
+            _has_bx = "\\boxed{" in _resp_text
+            _has_cf = "```py" in _resp_text or "```python" in _resp_text
+            print(
+                f"{_tag} asst#{agent_data.assistant_turns} "
+                f"len={len(agent_data.response_ids)}tok "
+                f"has_tool_call={_has_tc} has_boxed={_has_bx} has_code_fence={_has_cf}",
+                flush=True,
+            )
+            _head = _resp_text[:200].replace("\n", _arrow)
+            print(f"{_tag}   head: {_head}", flush=True)
+            if len(_resp_text) > 200:
+                _tail = _resp_text[-200:].replace("\n", _arrow)
+                print(f"{_tag}   tail: {_tail}", flush=True)
+
         # Check termination conditions
         if not ignore_termination and len(agent_data.response_mask) >= self.response_length:
+            if _dbg:
+                print(f"{_tag} TERM response_length_hit asst={agent_data.assistant_turns}", flush=True)
             return AgentState.TERMINATED
         if self.max_assistant_turns and agent_data.assistant_turns >= self.max_assistant_turns:
+            if _dbg:
+                print(f"{_tag} TERM max_assistant_turns asst={agent_data.assistant_turns}", flush=True)
             return AgentState.TERMINATED
         if self.max_user_turns and agent_data.user_turns >= self.max_user_turns:
+            if _dbg:
+                print(f"{_tag} TERM max_user_turns user={agent_data.user_turns}", flush=True)
             return AgentState.TERMINATED
 
         # Extract tool calls (use per-sample tools if routed)
         active_tools = getattr(agent_data, "_active_tools", self.tools)
         tools = [tool.tool_schema for tool in active_tools.values()]
         _, agent_data.tool_calls = await self.tool_parser.extract_tool_calls(agent_data.response_ids, tools)
+        if _dbg:
+            print(f"{_tag} parsed n_calls={len(agent_data.tool_calls)}", flush=True)
+            for i, c in enumerate(agent_data.tool_calls[:3]):
+                _args = (c.arguments or "").replace("\n", " ↵ ")
+                print(f"{_tag}   call[{i}]: {c.name}({_args[:200]})", flush=True)
 
         if agent_data.tool_calls:
             return AgentState.PROCESSING_TOOLS
         else:
+            if _dbg:
+                print(f"{_tag} TERM no_tool_call asst={agent_data.assistant_turns}", flush=True)
             return AgentState.TERMINATED
 
     async def _handle_processing_tools_state(self, agent_data: AgentData) -> AgentState:
@@ -297,6 +376,12 @@ class ToolAgentLoop(AgentLoopBase):
 
         with simple_timer("tool_calls", agent_data.metrics):
             responses = await asyncio.gather(*tasks)
+        if _dbg_enabled(agent_data.request_id):
+            _tag = _dbg_tag(agent_data.request_id)
+            print(f"{_tag} tool_exec done n={len(responses)} names={tool_call_names}", flush=True)
+            for i, r in enumerate(responses[:3]):
+                _t = (r[0].text or "").replace("\n", " ↵ ")
+                print(f"{_tag}   resp[{i}]: {_t[:200]}", flush=True)
 
         # Process tool responses and update multi_modal_data
         # Removed: agent_data.new_images_this_turn = []
