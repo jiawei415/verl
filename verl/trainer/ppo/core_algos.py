@@ -2425,6 +2425,7 @@ def compute_policy_loss_bypass_mode(
     rollout_is_batch_normalize = rollout_corr_config.get("rollout_is_batch_normalize", False)
     rollout_rs = rollout_corr_config.get("rollout_rs", None)
     rollout_rs_threshold = rollout_corr_config.get("rollout_rs_threshold", None)
+    monitor_only = rollout_corr_config.get("monitor_only", False)
 
     # In bypass mode: old_log_prob IS rollout_log_prob
     rollout_log_prob = old_log_prob
@@ -2442,6 +2443,7 @@ def compute_policy_loss_bypass_mode(
                 rollout_is_batch_normalize=rollout_is_batch_normalize,
                 rollout_rs=rollout_rs,
                 rollout_rs_threshold=rollout_rs_threshold,
+                monitor_only=monitor_only,
             )
         )
 

@@ -1111,6 +1111,20 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 logits_rmpad = output.logits.squeeze(0)  # (total_nnz, vocab_size)
                 logits_rmpad.div_(temperature_rmpad.clamp(min=1e-8).unsqueeze(-1).to(logits_rmpad.dtype))
 
+                # Optional min-p masking on training logits (dynamic vocab pruning).
+                train_min_p = tu.get_non_tensor_data(data=micro_batch, key="train_min_p", default=0.0)
+                if train_min_p > 0:
+                    from verl.utils.logit_masking import apply_minp_masking
+                    mask_value = tu.get_non_tensor_data(
+                        data=micro_batch, key="train_min_p_mask_value", default=-50.0
+                    )
+                    logits_rmpad, _minp_mask_ratio = apply_minp_masking(
+                        logits_rmpad, rho=train_min_p, mask_value=mask_value
+                    )
+                    model_output["train_min_p_masked_ratio"] = torch.tensor(
+                        _minp_mask_ratio, device=logits_rmpad.device
+                    )
+
                 # if use_sp: ((total_nnz / sp) + pad) ; if not use_sp: (batch, seqlen)
                 inplace_backward = True
                 if calculate_entropy:
@@ -1194,6 +1208,20 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 temperature = output_args["temperature"]  # (bsz,)
                 temperature = temperature.unsqueeze(-1).unsqueeze(-1)
                 logits.div_(temperature.clamp(min=1e-8).to(logits.dtype))
+
+                # Optional min-p masking on training logits (dynamic vocab pruning).
+                train_min_p = tu.get_non_tensor_data(data=micro_batch, key="train_min_p", default=0.0)
+                if train_min_p > 0:
+                    from verl.utils.logit_masking import apply_minp_masking
+                    mask_value = tu.get_non_tensor_data(
+                        data=micro_batch, key="train_min_p_mask_value", default=-50.0
+                    )
+                    logits, _minp_mask_ratio = apply_minp_masking(
+                        logits, rho=train_min_p, mask_value=mask_value
+                    )
+                    model_output["train_min_p_masked_ratio"] = torch.tensor(
+                        _minp_mask_ratio, device=logits.device
+                    )
 
                 if calculate_entropy:
                     if not self.engine_config.entropy_checkpointing:
@@ -1284,6 +1312,12 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 assert forward_only, "forward_only must be True when loss_function is None"
                 loss = torch.tensor(1.0, device=device_name)
                 metrics = {}
+
+            # Surface min-p masking diagnostic (scalar per micro-batch).
+            if "train_min_p_masked_ratio" in model_output:
+                metrics["train_min_p_masked_ratio"] = float(
+                    model_output["train_min_p_masked_ratio"].detach().cpu().item()
+                )
 
             output = {
                 "model_output": model_output,

@@ -785,6 +785,7 @@ def compute_rollout_correction_and_rejection_mask(
     rollout_is_batch_normalize: bool = False,
     rollout_rs: Optional[str] = None,
     rollout_rs_threshold: Optional[str | float] = None,
+    monitor_only: bool = False,
 ) -> tuple[Optional[DataProto], torch.Tensor, dict[str, float]]:
     """Unified interface for computing IS weights and rejection masks.
 
@@ -890,6 +891,13 @@ def compute_rollout_correction_and_rejection_mask(
     rollout_is_weights_proto: Optional[DataProto] = None
     if rollout_is_weights is not None:
         rollout_is_weights_proto = DataProto.from_dict(tensors={"rollout_is_weights": rollout_is_weights})
+
+    # Monitor-only: metrics are already collected above; drop the artifacts
+    # that would otherwise mutate training.
+    if monitor_only:
+        rollout_is_weights_proto = None
+        modified_response_mask = response_mask.clone()
+        metrics_scalar["rollout_corr/monitor_only"] = 1.0
 
     return rollout_is_weights_proto, modified_response_mask, metrics_scalar
 
@@ -1037,6 +1045,7 @@ def compute_rollout_correction_and_add_to_batch(
     rollout_is_batch_normalize = rollout_corr_config.get("rollout_is_batch_normalize", False)
     rollout_rs = rollout_corr_config.get("rollout_rs", None)
     rollout_rs_threshold = rollout_corr_config.get("rollout_rs_threshold", None)
+    monitor_only = rollout_corr_config.get("monitor_only", False)
 
     # Compute IS weights and get modified response_mask
     rollout_is_weights, modified_response_mask, rollout_corr_metrics = compute_rollout_correction_and_rejection_mask(
@@ -1048,6 +1057,7 @@ def compute_rollout_correction_and_add_to_batch(
         rollout_is_batch_normalize=rollout_is_batch_normalize,
         rollout_rs=rollout_rs,
         rollout_rs_threshold=rollout_rs_threshold,
+        monitor_only=monitor_only,
     )
 
     # ALWAYS update response_mask with rejection applied

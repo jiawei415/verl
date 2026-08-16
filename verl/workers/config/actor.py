@@ -167,6 +167,11 @@ class ActorConfig(BaseConfig):
     tau_neg: float = 1.05
     calculate_entropy: bool = False
     calculate_sum_pi_squared: bool = False
+    # Min-p masking for training logits. Set >0 to enable dynamic vocab pruning
+    # (keeps only tokens with prob >= rho * max_prob). Metric logged as
+    # `actor/train_min_p_masked_ratio`.
+    train_min_p: float = 0.0
+    train_min_p_mask_value: float = -50.0
     use_kl_loss: bool = False
     # Whether to enable PrefixGrouper-based shared-prefix forward
     use_prefix_grouper: bool = False

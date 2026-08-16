@@ -26,3 +26,9 @@ loss_type: ppo_clip
 
 # Batch normalize IS weights: false = raw weights, true = normalize to mean=1.0
 rollout_is_batch_normalize: false
+
+# Monitor-only mode: compute IS/RS metrics for diagnostics but skip applying
+# them to the policy loss and response mask. Use to observe
+# `rollout_corr/rollout_is_*` / `rollout_corr/rollout_rs_*` in wandb without
+# altering training math.
+monitor_only: false

@@ -1312,6 +1312,8 @@ class RayPPOTrainer:
         ppo_epochs = self.config.actor_rollout_ref.actor.ppo_epochs
         seed = self.config.actor_rollout_ref.actor.data_loader_seed
         shuffle = self.config.actor_rollout_ref.actor.shuffle
+        train_min_p = self.config.actor_rollout_ref.actor.get("train_min_p", 0.0)
+        train_min_p_mask_value = self.config.actor_rollout_ref.actor.get("train_min_p_mask_value", -50.0)
         tu.assign_non_tensor(
             batch_td,
             calculate_entropy=calculate_entropy,
@@ -1322,6 +1324,8 @@ class RayPPOTrainer:
             seed=seed,
             dataloader_kwargs={"shuffle": shuffle},
             compute_loss=True,
+            train_min_p=train_min_p,
+            train_min_p_mask_value=train_min_p_mask_value,
         )
         actor_output = self.actor_rollout_wg.update_actor(batch_td)
         actor_output = tu.get(actor_output, "metrics")
@@ -1530,7 +1534,33 @@ class RayPPOTrainer:
                     #   Note: π_old computed once per data batch, serves as stable reference during mini-batch updates
                     rollout_corr_config = self.config.algorithm.get("rollout_correction", None)
                     bypass_recomputing_logprobs = rollout_corr_config and rollout_corr_config.get("bypass_mode", False)
+                    # Even in bypass mode, the training-side forward may still be
+                    # required to produce diagnostics that only the training
+                    # policy can supply (e.g. Σπ² for OTB, entropy for logging).
+                    actor_cfg = self.config.actor_rollout_ref.actor
+                    needs_training_forward = actor_cfg.get("calculate_sum_pi_squared", False)
                     if bypass_recomputing_logprobs:  # Use `rollout_log_probs`
+                        if needs_training_forward:
+                            with marked_timer("old_log_prob", timing_raw, color="blue"):
+                                # Run the training-side forward strictly for diagnostics
+                                # (Σπ², entropy). Its old_log_prob output will be
+                                # overwritten by apply_bypass_mode below.
+                                old_log_prob, old_log_prob_mfu = self._compute_old_log_prob(batch)
+                                entropys = old_log_prob.batch.pop("entropys", None)
+                                if entropys is not None:
+                                    entropy_agg = agg_loss(
+                                        loss_mat=entropys,
+                                        loss_mask=batch.batch["response_mask"],
+                                        loss_agg_mode=actor_cfg.loss_agg_mode,
+                                        loss_scale_factor=actor_cfg.loss_scale_factor,
+                                    )
+                                    metrics["actor/entropy"] = entropy_agg.detach().item()
+                                metrics["perf/mfu/actor_infer"] = old_log_prob_mfu
+                                # Keep sum_pi_squared / other diagnostic tensors,
+                                # drop the log_probs (bypass_mode will supply them).
+                                old_log_prob.batch.pop("old_log_probs", None)
+                                batch = batch.union(old_log_prob)
+
                         from verl.trainer.ppo.rollout_corr_helper import apply_bypass_mode
 
                         apply_bypass_mode(
