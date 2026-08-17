@@ -346,6 +346,54 @@ def compute_throughout_metrics(batch: DataProto, timing_raw: dict[str, float], n
     }
 
 
+def compute_sampled_prob_metrics(batch: DataProto) -> dict[str, float]:
+    """
+    Per-token sampled-probability statistics for training and rollout policies.
+
+    Reads log-probs already populated by the training-side forward
+    (`old_log_probs`) and the rollout worker (`rollout_log_probs`), evaluated
+    on the sampled tokens. Emits, per policy tag ``train`` / ``rollout``:
+
+      - actor/sampled_prob/{tag}/min          -- global min over valid tokens
+      - actor/sampled_prob/{tag}/mean         -- global mean over valid tokens
+      - actor/sampled_prob/{tag}/max          -- global max over valid tokens
+      - actor/sampled_prob/{tag}/min_seq_mean -- per-seq min then batch mean
+      - actor/sampled_prob/{tag}/min_seq_p05  -- per-seq min then 5th percentile
+
+    Returns {} when the required tensors are missing.
+    """
+    metrics: dict[str, float] = {}
+    if "response_mask" not in batch.batch:
+        return metrics
+    mask = batch.batch["response_mask"].bool()
+    if not mask.any():
+        return metrics
+
+    for tag, lp_key in (("train", "old_log_probs"), ("rollout", "rollout_log_probs")):
+        if lp_key not in batch.batch:
+            continue
+        lp = batch.batch[lp_key]
+        # Guard shape mismatch (padding vs no-padding paths).
+        if lp.shape != mask.shape:
+            continue
+        valid = lp[mask]
+        if valid.numel() == 0:
+            continue
+        metrics[f"actor/sampled_prob/{tag}/min"] = torch.exp(valid.min()).item()
+        metrics[f"actor/sampled_prob/{tag}/mean"] = torch.exp(valid).mean().item()
+        metrics[f"actor/sampled_prob/{tag}/max"] = torch.exp(valid.max()).item()
+
+        per_seq_min = lp.masked_fill(~mask, float("inf")).min(dim=-1).values
+        per_seq_min = per_seq_min[per_seq_min < float("inf")]
+        if per_seq_min.numel() == 0:
+            continue
+        metrics[f"actor/sampled_prob/{tag}/min_seq_mean"] = torch.exp(per_seq_min).mean().item()
+        q = torch.quantile(per_seq_min.float(), 0.05)
+        metrics[f"actor/sampled_prob/{tag}/min_seq_p05"] = torch.exp(q).item()
+
+    return metrics
+
+
 def compute_variance_proxy_metrics(batch: DataProto, gradient_norm: float = None) -> dict[str, float]:
     """
     Compute variance proxy metrics using the simplified expected squared norm approach.

@@ -14,10 +14,7 @@ build_common_arrays
 ########################### parameter arrays ###########################
 DATA=("${COMMON_DATA[@]}" algorithm.adv_estimator=${adv_estimator})
 
-ACTOR=(
-    "${COMMON_ACTOR[@]}"
-    actor_rollout_ref.actor.calculate_sum_pi_squared=True
-)
+ACTOR=("${COMMON_ACTOR[@]}")
 
 ROLLOUT=("${COMMON_ROLLOUT[@]}")
 

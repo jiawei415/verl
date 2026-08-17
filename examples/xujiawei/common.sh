@@ -65,21 +65,11 @@ COMMON_DATA=(
     data.max_response_length=${max_response_length}
     data.filter_overlong_prompts=True
     data.truncation='error'
-    # Rollout correction: MONITOR-ONLY diagnostics + bypass_mode loss.
-    # - bypass_mode=True  => loss uses rollout log_prob as the "old" log_prob
-    #   (skip training-side old_log_prob in ratio computation). Training-side
-    #   old_log_prob is still computed when needed (e.g. OTB Σπ²) but only for
-    #   diagnostics, not for the policy loss.
-    # - monitor_only=True => IS weights + RS masks computed but NOT applied,
-    #   so `rollout_corr/*` metrics show up without changing training math.
-    algorithm.rollout_correction.rollout_is=${ROLLOUT_IS:-token}
-    algorithm.rollout_correction.rollout_is_threshold=${ROLLOUT_IS_THRESHOLD:-2.0}
-    algorithm.rollout_correction.rollout_is_batch_normalize=${ROLLOUT_IS_BATCH_NORM:-False}
-    algorithm.rollout_correction.rollout_rs="'${ROLLOUT_RS:-token_k1,seq_sum_k1,seq_mean_k1,seq_max_k1}'"
-    algorithm.rollout_correction.rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-1000.0}
+    # Bypass-mode policy loss: ratio uses rollout_log_probs as `old`, but the
+    # training-side old_log_probs are still computed for diagnostics (Σπ²,
+    # entropy) and surfaced via `rollout_corr/*` metrics (kl/ppl/chi²).
     algorithm.rollout_correction.bypass_mode=${ROLLOUT_CORR_BYPASS:-True}
     algorithm.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-ppo_clip}
-    algorithm.rollout_correction.monitor_only=${ROLLOUT_CORR_MONITOR_ONLY:-True}
 )
 
 COMMON_TRAINER=(
@@ -121,6 +111,15 @@ build_common_arrays() {
         actor_rollout_ref.actor.entropy_coeff=${entropy_coeff}
         actor_rollout_ref.actor.fsdp_config.param_offload=False
         actor_rollout_ref.actor.fsdp_config.optimizer_offload=False
+        # Emit variance-proxy metrics (`gradient_variance_proxy_*`) every step;
+        # requires Σπ² from the actor forward (small extra compute).
+        actor_rollout_ref.actor.calculate_sum_pi_squared=${CALCULATE_SUM_PI_SQUARED:-True}
+        # Worker-side mirror of bypass-mode settings. Ray workers read this at
+        # init time; the driver-side `apply_bypass_mode` mutation is a no-op
+        # for already-instantiated workers.
+        actor_rollout_ref.actor.policy_loss.loss_mode=${ROLLOUT_CORR_LOSS_MODE:-bypass_mode}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.bypass_mode=${ROLLOUT_CORR_BYPASS:-True}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-ppo_clip}
     )
     COMMON_ROLLOUT=(
         actor_rollout_ref.rollout.name=vllm

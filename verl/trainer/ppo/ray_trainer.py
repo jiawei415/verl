@@ -45,6 +45,7 @@ from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
+    compute_sampled_prob_metrics,
     compute_variance_proxy_metrics,
     process_validation_metrics,
 )
@@ -1529,77 +1530,68 @@ class RayPPOTrainer:
                         reward_tensor, reward_extra_infos_dict = extract_reward(batch)
 
                     # Operating Mode Selection:
-                    # - Bypass mode: Sets old_log_probs = rollout_log_probs (2 policies: π_rollout, π_θ)
-                    # - Decoupled mode: Recomputes old_log_probs as proximal anchor (3 policies: π_rollout, π_old, π_θ)
-                    #   Note: π_old computed once per data batch, serves as stable reference during mini-batch updates
+                    # - Bypass mode: Loss uses rollout_log_probs as "old". We still run
+                    #   the training-side forward to get diagnostic old_log_probs
+                    #   (kept under `training_old_log_probs`), entropy, and Σπ² if
+                    #   requested. `apply_bypass_mode` then overwrites
+                    #   batch["old_log_probs"] = rollout_log_probs before the actor
+                    #   update so the ratio in the loss uses rollout log probs.
+                    # - Decoupled mode: Uses training-side old_log_probs directly in
+                    #   the ratio (3 policies: π_rollout, π_old, π_θ).
                     rollout_corr_config = self.config.algorithm.get("rollout_correction", None)
                     bypass_recomputing_logprobs = rollout_corr_config and rollout_corr_config.get("bypass_mode", False)
-                    # Even in bypass mode, the training-side forward may still be
-                    # required to produce diagnostics that only the training
-                    # policy can supply (e.g. Σπ² for OTB, entropy for logging).
                     actor_cfg = self.config.actor_rollout_ref.actor
-                    needs_training_forward = actor_cfg.get("calculate_sum_pi_squared", False)
-                    if bypass_recomputing_logprobs:  # Use `rollout_log_probs`
-                        if needs_training_forward:
-                            with marked_timer("old_log_prob", timing_raw, color="blue"):
-                                # Run the training-side forward strictly for diagnostics
-                                # (Σπ², entropy). Its old_log_prob output will be
-                                # overwritten by apply_bypass_mode below.
-                                old_log_prob, old_log_prob_mfu = self._compute_old_log_prob(batch)
-                                entropys = old_log_prob.batch.pop("entropys", None)
-                                if entropys is not None:
-                                    entropy_agg = agg_loss(
-                                        loss_mat=entropys,
-                                        loss_mask=batch.batch["response_mask"],
-                                        loss_agg_mode=actor_cfg.loss_agg_mode,
-                                        loss_scale_factor=actor_cfg.loss_scale_factor,
-                                    )
-                                    metrics["actor/entropy"] = entropy_agg.detach().item()
-                                metrics["perf/mfu/actor_infer"] = old_log_prob_mfu
-                                # Keep sum_pi_squared / other diagnostic tensors,
-                                # drop the log_probs (bypass_mode will supply them).
-                                old_log_prob.batch.pop("old_log_probs", None)
-                                batch = batch.union(old_log_prob)
+                    with marked_timer("old_log_prob", timing_raw, color="blue"):
+                        old_log_prob, old_log_prob_mfu = self._compute_old_log_prob(batch)
+                        entropys = old_log_prob.batch.pop("entropys", None)
+                        if entropys is not None:
+                            entropy_agg = agg_loss(
+                                loss_mat=entropys,
+                                loss_mask=batch.batch["response_mask"],
+                                loss_agg_mode=actor_cfg.loss_agg_mode,
+                                loss_scale_factor=actor_cfg.loss_scale_factor,
+                            )
+                            metrics["actor/entropy"] = entropy_agg.detach().item()
+                        metrics["perf/mfu/actor_infer"] = old_log_prob_mfu
+                        if "routed_experts" in batch.batch and "routed_experts" in old_log_prob.batch:
+                            raise ValueError(
+                                "Detected conflicting router replay configuration: "
+                                "router_replay.mode='R2' and enable_rollout_routing_replay=True "
+                                "cannot be enabled simultaneously. "
+                                "The enable_rollout_routing_replay option is only used in R3 mode; "
+                                "it should not be set when using R2 mode."
+                            )
+                        batch = batch.union(old_log_prob)
 
+                    # Log off-policy diagnostics whenever rollout_log_probs available.
+                    if "rollout_log_probs" in batch.batch and "old_log_probs" in batch.batch:
+                        from verl.trainer.ppo.rollout_corr_helper import compute_offpolicy_metrics
+                        _op_metrics = compute_offpolicy_metrics(
+                            old_log_prob=batch.batch["old_log_probs"],
+                            rollout_log_prob=batch.batch["rollout_log_probs"],
+                            response_mask=batch.batch["response_mask"],
+                        )
+                        metrics.update({f"rollout_corr/{k}": v for k, v in _op_metrics.items()})
+
+                    if bypass_recomputing_logprobs:
+                        # Preserve training old_log_probs under a diagnostic key
+                        # (in case a downstream analysis wants both), then
+                        # overwrite batch["old_log_probs"] with rollout_log_probs
+                        # so the policy loss ratio uses π_rollout as anchor.
                         from verl.trainer.ppo.rollout_corr_helper import apply_bypass_mode
 
+                        if "rollout_log_probs" in batch.batch:
+                            batch.batch["training_old_log_probs"] = batch.batch["old_log_probs"]
                         apply_bypass_mode(
                             batch=batch,
                             rollout_corr_config=rollout_corr_config,
                             policy_loss_config=self.config.actor_rollout_ref.actor.policy_loss,
                         )
-                    else:  # Recompute old_log_probs
-                        with marked_timer("old_log_prob", timing_raw, color="blue"):
-                            old_log_prob, old_log_prob_mfu = self._compute_old_log_prob(batch)
-                            entropys = old_log_prob.batch["entropys"]
-                            response_masks = batch.batch["response_mask"]
-                            actor_config = self.config.actor_rollout_ref.actor
-                            entropy_agg = agg_loss(
-                                loss_mat=entropys,
-                                loss_mask=response_masks,
-                                loss_agg_mode=actor_config.loss_agg_mode,
-                                loss_scale_factor=actor_config.loss_scale_factor,
-                            )
-                            old_log_prob_metrics = {
-                                "actor/entropy": entropy_agg.detach().item(),
-                                "perf/mfu/actor_infer": old_log_prob_mfu,
-                            }
-                            metrics.update(old_log_prob_metrics)
-                            old_log_prob.batch.pop("entropys")
-                            if "routed_experts" in batch.batch and "routed_experts" in old_log_prob.batch:
-                                raise ValueError(
-                                    "Detected conflicting router replay configuration: "
-                                    "router_replay.mode='R2' and enable_rollout_routing_replay=True "
-                                    "cannot be enabled simultaneously. "
-                                    "The enable_rollout_routing_replay option is only used in R3 mode; "
-                                    "it should not be set when using R2 mode."
-                                )
-                            batch = batch.union(old_log_prob)
-                            if "rollout_log_probs" in batch.batch.keys():
-                                # TODO: we may want to add diff of probs too.
-                                from verl.utils.debug.metrics import calculate_debug_metrics
+                    else:  # Decoupled mode: keep old_log_probs as-is (already merged)
+                        if "rollout_log_probs" in batch.batch:
+                            from verl.utils.debug.metrics import calculate_debug_metrics
 
-                                metrics.update(calculate_debug_metrics(batch))
+                            metrics.update(calculate_debug_metrics(batch))
 
                     assert "old_log_probs" in batch.batch, f'"old_log_prob" not in {batch.batch.keys()=}'
 
@@ -1765,6 +1757,8 @@ class RayPPOTrainer:
                 # compute variance proxy metrics
                 gradient_norm = metrics.get("actor/grad_norm", None)
                 metrics.update(compute_variance_proxy_metrics(batch=batch, gradient_norm=gradient_norm))
+                # Per-token sampled-probability tail metrics for train / rollout policies.
+                metrics.update(compute_sampled_prob_metrics(batch=batch))
                 # Note: mismatch metrics (KL, PPL, etc.) are collected at line 1179 after advantage computation
 
                 # Per-request spec decode metrics.

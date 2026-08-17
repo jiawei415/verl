@@ -75,6 +75,19 @@ policy_loss:
   # KL divergence penalty coefficient
   ppo_kl_coef: 0.1
 
+  # Rollout correction config (mirror of algorithm.rollout_correction so Ray
+  # workers see it at init time). Set via CLI: actor.policy_loss.rollout_correction.*
+  rollout_correction:
+    _target_: verl.trainer.config.RolloutCorrectionConfig
+    rollout_is: null
+    rollout_is_threshold: 2.0
+    rollout_rs: null
+    rollout_rs_threshold: null
+    bypass_mode: false
+    loss_type: ppo_clip
+    rollout_is_batch_normalize: false
+    monitor_only: false
+
 # Constant C in Dual-clip PPO; clips when advantage < 0 and ratio > C
 clip_ratio_c: 3.0
 
