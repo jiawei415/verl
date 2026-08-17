@@ -108,6 +108,11 @@ calculate_entropy: false
 # c.f. https://yingru.notion.site/The-Optimal-Token-Baseline-399211a558b782cfa936014c0d42dfb8
 calculate_sum_pi_squared: false
 
+# Min-p masking on training logits (dynamic vocab pruning). Set >0 to enable.
+# Logged as `actor/train_min_p_masked_ratio`.
+train_min_p: 0.0
+train_min_p_mask_value: -50.0
+
 # Whether to use KL loss instead of KL reward penalty. True for GRPO
 use_kl_loss: false
 

@@ -1121,9 +1121,10 @@ class FSDPEngineWithLMHead(FSDPEngine):
                     logits_rmpad, _minp_mask_ratio = apply_minp_masking(
                         logits_rmpad, rho=train_min_p, mask_value=mask_value
                     )
-                    model_output["train_min_p_masked_ratio"] = torch.tensor(
-                        _minp_mask_ratio, device=logits_rmpad.device
-                    )
+                    # Stash scalar on the engine so forward_step can lift it
+                    # into `metrics`; storing it under `model_output` breaks
+                    # postprocess_batch_func which expects nested tensors.
+                    self._last_minp_mask_ratio = float(_minp_mask_ratio)
 
                 # if use_sp: ((total_nnz / sp) + pad) ; if not use_sp: (batch, seqlen)
                 inplace_backward = True
@@ -1219,9 +1220,7 @@ class FSDPEngineWithLMHead(FSDPEngine):
                     logits, _minp_mask_ratio = apply_minp_masking(
                         logits, rho=train_min_p, mask_value=mask_value
                     )
-                    model_output["train_min_p_masked_ratio"] = torch.tensor(
-                        _minp_mask_ratio, device=logits.device
-                    )
+                    self._last_minp_mask_ratio = float(_minp_mask_ratio)
 
                 if calculate_entropy:
                     if not self.engine_config.entropy_checkpointing:
@@ -1314,10 +1313,10 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 metrics = {}
 
             # Surface min-p masking diagnostic (scalar per micro-batch).
-            if "train_min_p_masked_ratio" in model_output:
-                metrics["train_min_p_masked_ratio"] = float(
-                    model_output["train_min_p_masked_ratio"].detach().cpu().item()
-                )
+            _last_minp = getattr(self, "_last_minp_mask_ratio", None)
+            if _last_minp is not None:
+                metrics["train_min_p_masked_ratio"] = float(_last_minp)
+                self._last_minp_mask_ratio = None
 
             output = {
                 "model_output": model_output,

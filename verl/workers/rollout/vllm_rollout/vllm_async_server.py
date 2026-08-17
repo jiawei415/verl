@@ -844,6 +844,7 @@ class vLLMHttpServer:
             temperature=self.config.temperature,
             top_k=self.config.top_k,
             top_p=self.config.top_p,
+            min_p=self.config.get("min_p", 0.0),
             repetition_penalty=1.0,
             max_new_tokens=self.config.response_length,
         )

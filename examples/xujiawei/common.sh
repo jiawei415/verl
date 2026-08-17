@@ -55,6 +55,13 @@ entropy_coeff=${ENTROPY_COEFF:-0}
 save_freq=${SAVE_FREQ:-20}
 test_freq=${TEST_FREQ:-5}
 
+# ---- Single min-p knob (applies to training-logit masking, train rollout
+# sampling, and val rollout sampling). Default 0 => disabled everywhere.
+# Enable with e.g. `MIN_P=6.144212353328e-06` (= exp(-12)) to use min-p
+# sampling as the sole tail filter. Val temperature/top_p are forced to
+# 1.0/1.0 in COMMON_ROLLOUT so min-p is the only cutoff when enabled.
+min_p=${MIN_P:-0.0}
+
 # ---- Shared Hydra arg arrays (algo scripts extend or override) ----
 COMMON_DATA=(
     algorithm.use_kl_in_reward=False
@@ -114,6 +121,9 @@ build_common_arrays() {
         # Emit variance-proxy metrics (`gradient_variance_proxy_*`) every step;
         # requires Σπ² from the actor forward (small extra compute).
         actor_rollout_ref.actor.calculate_sum_pi_squared=${CALCULATE_SUM_PI_SQUARED:-True}
+        # min-p gradient masking on training logits (same value as sampling min-p
+        # by default -- MIN_P=0 disables).
+        actor_rollout_ref.actor.train_min_p=${min_p}
         # Worker-side mirror of bypass-mode settings. Ray workers read this at
         # init time; the driver-side `apply_bypass_mode` mutation is a no-op
         # for already-instantiated workers.
@@ -129,9 +139,16 @@ build_common_arrays() {
         actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True
         actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${ppo_max_token_len_per_gpu}
         actor_rollout_ref.rollout.calculate_log_probs=True
+        # Train rollout sampling: min-p as the sole tail filter when enabled.
+        actor_rollout_ref.rollout.min_p=${min_p}
+        # Val rollout sampling: temperature/top_p forced to 1.0 so min-p is the
+        # only cutoff.
+        # Val temperature/top_p fixed to 1.0 so min-p (when enabled) is the
+        # sole tail filter. Override with VAL_TEMPERATURE / VAL_TOP_P.
         actor_rollout_ref.rollout.val_kwargs.n=4
-        actor_rollout_ref.rollout.val_kwargs.temperature=1.0
-        actor_rollout_ref.rollout.val_kwargs.top_p=0.95
+        actor_rollout_ref.rollout.val_kwargs.temperature=${VAL_TEMPERATURE:-1.0}
+        actor_rollout_ref.rollout.val_kwargs.top_p=${VAL_TOP_P:-1.0}
+        actor_rollout_ref.rollout.val_kwargs.min_p=${min_p}
     )
     COMMON_REF=(
         actor_rollout_ref.ref.log_prob_use_dynamic_bsz=True

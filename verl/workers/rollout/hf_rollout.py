@@ -74,6 +74,7 @@ class HFRollout(BaseRollout):
                 "num_beams": 1,
                 "top_k": max(0, self.config.val_kwargs.top_k),  # to be compatible with vllm
                 "top_p": self.config.val_kwargs.top_p,
+                "min_p": self.config.val_kwargs.get("min_p", 0.0),
                 "temperature": self.config.val_kwargs.temperature,
                 "num_return_sequences": 1,  # if validate, already repeat in ray_trainer
             }

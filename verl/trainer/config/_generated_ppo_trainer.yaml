@@ -93,6 +93,8 @@ actor_rollout_ref:
     entropy_coeff: 0
     calculate_entropy: false
     calculate_sum_pi_squared: false
+    train_min_p: 0.0
+    train_min_p_mask_value: -50.0
     use_kl_loss: false
     use_prefix_grouper: false
     use_torch_compile: true
@@ -252,6 +254,7 @@ actor_rollout_ref:
     temperature: 1.0
     top_k: -1
     top_p: 1
+    min_p: 0
     prompt_length: ${oc.select:data.max_prompt_length,512}
     response_length: ${oc.select:data.max_response_length,512}
     dtype: bfloat16
@@ -290,6 +293,7 @@ actor_rollout_ref:
       _target_: verl.workers.config.SamplingConfig
       top_k: -1
       top_p: 1.0
+      min_p: 0
       temperature: 0
       'n': 1
       do_sample: false
