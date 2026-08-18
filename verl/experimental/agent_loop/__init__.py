@@ -22,6 +22,9 @@ from .agent_loop import (
 from .single_turn_agent_loop import SingleTurnAgentLoop
 from .tool_agent_loop import ToolAgentLoop
 
+# Import to trigger @ToolParser.register side-effects for out-of-tree parsers.
+from . import code_fence_tool_parser  # noqa: F401
+
 _ = [SingleTurnAgentLoop, ToolAgentLoop]
 
 __all__ = [
