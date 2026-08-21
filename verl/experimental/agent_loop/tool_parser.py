@@ -428,3 +428,53 @@ class Gemma4ToolParser(ToolParser):
         content_idx = text.find(self.tool_call_start_token)
         content = text[:content_idx] if content_idx >= 0 else text
         return content, function_calls
+
+
+@ToolParser.register("search_r1")
+class SearchR1ToolParser(ToolParser):
+    """Parser for the Search-R1 (https://github.com/PeterGriffinJin/Search-R1) protocol.
+
+    Expected trajectory format from the assistant::
+
+        <think> reasoning </think>
+        <tool_call> Python is a programming language </tool_call>
+        <tool_response> ... </tool_response>
+        <answer> ... </answer>
+
+    ``<tool_call>...</tool_call>`` wraps a *raw query string*, not JSON, so we
+    map every match to a synthetic ``search`` FunctionCall whose ``arguments``
+    is ``{"query": "..."}``. The search function-tool (see
+    ``examples/xujiawei/search_tool.py``) accepts either ``query`` or
+    ``query_list``.
+
+    This parser targets **base** models trained to emit bare queries.
+    Instruction-tuned models that emit Hermes-style JSON inside the tags
+    should use ``format=hermes`` instead.
+    """
+
+    def __init__(self, tokenizer) -> None:
+        super().__init__(tokenizer)
+        self.tool_call_start_token = "<tool_call>"
+        self.tool_call_end_token = "</tool_call>"
+        self.tool_call_regex = regex.compile(r"<tool_call>(.*?)</tool_call>", regex.DOTALL)
+
+    @rollout_trace_op
+    async def extract_tool_calls(
+        self, responses_ids: list[int], tools: list[OpenAIFunctionToolSchema] = None
+    ) -> tuple[str, list[FunctionCall]]:
+        loop = get_event_loop()
+        text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
+        if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
+            return text, []
+
+        function_calls: list[FunctionCall] = []
+        for match in self.tool_call_regex.findall(text):
+            query = match.strip()
+            if not query:
+                continue
+            function_calls.append(
+                FunctionCall(name="search", arguments=json.dumps({"query": query}, ensure_ascii=False))
+            )
+
+        content = self.tool_call_regex.sub("", text)
+        return content, function_calls
