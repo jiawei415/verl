@@ -6,8 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Distillation on 8 GPUs: split student(4) + teacher(4).
 : "${NGPUS_PER_NODE:=4}"
-: "${TRAIN_BATCH_SIZE:=64}"
-: "${PPO_MINI_BATCH_SIZE:=64}"
 : "${PPO_MAX_TOKEN_LEN_PER_GPU:=16384}"
 : "${ROLLOUT_GPU_MEM_UTIL:=0.85}"
 : "${ROLLOUT_N:=1}"
