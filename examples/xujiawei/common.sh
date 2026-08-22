@@ -8,6 +8,10 @@ export WANDB_API_KEY=2e430da03653e9b9961aaa2a0facadd7fe45204a
 export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
 export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
+# Reward: math_dapo defaults to {-1,+1}. Set MATH_REWARD_POSITIVE_ONLY=1 to
+# switch to {0,1} so scale matches code / search EM rewards.
+export MATH_REWARD_POSITIVE_ONLY=${MATH_REWARD_POSITIVE_ONLY:-1}
+
 # ---- HDFS paths ----
 HDFS_PATH=${HDFS_PATH:-/mnt/hdfs/byte_data_seed/hdd_hldy/user/xujiawei.415}
 MODEL_ROOT=${MODEL_ROOT:-$HDFS_PATH/hf_models}

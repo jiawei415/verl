@@ -13,6 +13,8 @@
 # limitations under the License.
 # from . import gsm8k, math, prime_math, prime_code
 
+import os
+
 from verl.utils.import_utils import deprecated
 
 
@@ -65,7 +67,12 @@ def default_compute_score(
     ):
         from . import math_dapo
 
-        res = math_dapo.compute_score(solution_str, ground_truth, strict_box_verify=True)
+        res = math_dapo.compute_score(
+            solution_str,
+            ground_truth,
+            strict_box_verify=True,
+            positive_only=os.environ.get("MATH_REWARD_POSITIVE_ONLY", "0") == "1",
+        )
         # is_correct_strict_box returns pred=None when no \boxed is found; downstream
         # metric aggregation cannot handle None, so coerce to a sentinel string.
         if isinstance(res, dict) and res.get("pred") is None:

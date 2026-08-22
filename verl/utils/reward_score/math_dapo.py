@@ -244,6 +244,7 @@ def compute_score(
     ground_truth: str,
     strict_box_verify: bool = False,
     pause_tokens_index: Optional[list[int]] = None,
+    positive_only: bool = False,
 ) -> float:
     """Compute the reward score for a solution.
 
@@ -252,9 +253,13 @@ def compute_score(
         ground_truth: The ground truth answer
         strict_box_verify: Whether to use strict box verification
         pause_tokens_index: Indices of pause tokens
+        positive_only: If True, use {0.0, 1.0} instead of the default {-1.0, +1.0}.
+            Handy when combining with rewards that live on the non-negative range
+            (e.g. code / search EM) so mean/std comparisons stay apples-to-apples.
 
     Returns:
-        Reward score (1.0 for correct, -1.0 for incorrect)
+        Reward score (1.0 for correct; -1.0 or 0.0 for incorrect depending on
+        `positive_only`).
     """
     # Limit solution length for efficiency
     solution_str = solution_str[-300:]  # The longest answer in MATH-500 has 159 characters
@@ -262,7 +267,10 @@ def compute_score(
     # Verify the solution
     correct, pred = verify(solution_str, ground_truth, strict_box_verify, pause_tokens_index)
 
-    reward = 1.0 if correct else -1.0
+    if correct:
+        reward = 1.0
+    else:
+        reward = 0.0 if positive_only else -1.0
     acc = correct
 
     return {
