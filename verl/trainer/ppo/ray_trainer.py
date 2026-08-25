@@ -747,6 +747,23 @@ class RayPPOTrainer:
             metric_dict["val-aux/num_turns/max"] = sample_turns.max()
             metric_dict["val-aux/num_turns/mean"] = sample_turns.mean()
 
+        # Macro-average across difficulty-split data_sources sharing a prefix
+        # (e.g. `livecodebench_easy` / `_medium` / `_hard` → `livecodebench_avg`).
+        # Simple mean of per-source means; not weighted by n_samples, so `easy`
+        # and `hard` contribute equally regardless of subset size.
+        _MACRO_PREFIXES = ("livecodebench_", "codeforces_")
+        macro_buckets: dict = {}
+        for key, val in list(metric_dict.items()):
+            if not key.startswith("val-core/"):
+                continue
+            _, ds, *rest = key.split("/")
+            for prefix in _MACRO_PREFIXES:
+                if ds.startswith(prefix) and ds != prefix + "avg":
+                    bucket_key = "val-core/" + prefix + "avg/" + "/".join(rest)
+                    macro_buckets.setdefault(bucket_key, []).append(val)
+        for bucket_key, vals in macro_buckets.items():
+            metric_dict[bucket_key] = float(np.mean(vals))
+
         return metric_dict
 
     def _merge_validation_results(self, result_a, result_b):

@@ -221,8 +221,22 @@ def cf_row_to_verl(row, idx: int, split: str) -> dict | None:
     gt_json = json.dumps(ground_truth)
     if len(gt_json) > MAX_TOTAL_GT_BYTES:
         return None
+    # For CF test rows: bucket by rating so verl reports per-tier pass@1
+    # (`codeforces_easy` <=1200, `_medium` 1300-1900, `_hard` >=2000). Train
+    # rows keep the plain `codeforces` tag.
+    if split == "test":
+        r = int(rating)
+        if r <= 1200:
+            tier = "easy"
+        elif r <= 1900:
+            tier = "medium"
+        else:
+            tier = "hard"
+        data_source = f"codeforces_{tier}"
+    else:
+        data_source = "codeforces"
     return {
-        "data_source": "codeforces",
+        "data_source": data_source,
         "prompt": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -358,8 +372,13 @@ def lcb_row_to_verl(row, idx: int, cutoff_iso: str) -> dict | None:
     gt_json = json.dumps(ground_truth)
     if len(gt_json) > MAX_TOTAL_GT_BYTES:
         return None
+    # Suffix data_source with difficulty so verl reports pass@1 per level
+    # (`livecodebench_easy` / `_medium` / `_hard`). Reward router keys still
+    # match via startswith("livecodebench") in reward_score/__init__.py.
+    diff = (row.get("difficulty") or "unknown").lower()
+    data_source = f"livecodebench_{diff}"
     return {
-        "data_source": "livecodebench",
+        "data_source": data_source,
         "prompt": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -453,7 +472,7 @@ def main() -> int:
     ap.add_argument("--lcb_dir", required=True, type=Path)
     ap.add_argument("--out_dir", required=True, type=Path)
     ap.add_argument("--lcb_release", default="release_latest")
-    ap.add_argument("--lcb_cutoff", default="2024-08-01")
+    ap.add_argument("--lcb_cutoff", default="2025-01-01")
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -477,12 +496,21 @@ def main() -> int:
     train_rows = convert(cf["train"], cf_row_to_verl, "train")
     print(f"[cf] train kept={len(train_rows)}")
 
+    print("[cf] convert test")
+    cf_test_rows = convert(cf["test"], cf_row_to_verl, "test")
+    print(f"[cf] test kept={len(cf_test_rows)}")
+
     print("[lcb] convert test")
-    test_rows = convert(lcb, lcb_row_to_verl, args.lcb_cutoff)
-    print(f"[lcb] test kept={len(test_rows)}")
+    lcb_test_rows = convert(lcb, lcb_row_to_verl, args.lcb_cutoff)
+    print(f"[lcb] test kept={len(lcb_test_rows)}")
+    test_rows = cf_test_rows + lcb_test_rows
 
     stats["train_after_filter"] = {"n": len(train_rows)}
-    stats["test_after_filter"] = {"n": len(test_rows)}
+    stats["test_after_filter"] = {
+        "n": len(test_rows),
+        "n_cf": len(cf_test_rows),
+        "n_lcb": len(lcb_test_rows),
+    }
 
     train_df = pd.DataFrame(train_rows)
     test_df = pd.DataFrame(test_rows)
