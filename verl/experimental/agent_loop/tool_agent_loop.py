@@ -250,6 +250,15 @@ class ToolAgentLoop(AgentLoopBase):
     async def _handle_pending_state(self, agent_data: AgentData, sampling_params: dict[str, Any]) -> AgentState:
         """Handle the pending state: prepare the prompt and start generation."""
         schemas = getattr(agent_data, "_active_tool_schemas", self.tool_schemas)
+        # Set TOOL_SCHEMA_INJECT=0 to skip passing tool schemas to
+        # apply_chat_template. Qwen and most modern chat templates append a
+        # Hermes-style `# Tools ... <tools>...</tools> ... <tool_call>{JSON}...`
+        # block to the system message when `tools=` is set, which conflicts
+        # with data whose user prompt spells out its own tool protocol
+        # (e.g. Search-R1's bare <tool_call>query</tool_call>). Parsing is
+        # unaffected because tool_parser reads raw model output text.
+        if os.environ.get("TOOL_SCHEMA_INJECT", "1") == "0":
+            schemas = None
         prompt_ids = await self.apply_chat_template(
             agent_data.messages,
             tools=schemas,

@@ -51,8 +51,10 @@ def _build_row(row, split_name: str, row_index: int) -> pd.Series:
     """Transform one raw HF row into verl format."""
     question = row.get("question", "")
     user_content = USER_CONTENT_PREFIX.rstrip("\n") + question
+    # Search-R1 official protocol targets base models with no system prompt:
+    # the entire tool-use spec lives inside the user turn, matching
+    # https://github.com/PeterGriffinJin/Search-R1/blob/main/scripts/data_process/nq_search.py
     prompt = [
-        {"role": "system", "content": SYSTEM_CONTENT},
         {"role": "user", "content": user_content},
     ]
 

@@ -8,6 +8,13 @@ export WANDB_API_KEY=2e430da03653e9b9961aaa2a0facadd7fe45204a
 export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
 export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
+# Skip tool-schema injection into chat_template. Otherwise Qwen and similar
+# tokenizers append a Hermes `# Tools ... <tool_call>{JSON}...` block to the
+# system prompt whenever `tools=` is passed, which fights against Search-R1
+# / code-fence protocols that live entirely in the user turn. tool_parser
+# still runs — it reads raw output text, not the injected schema.
+export TOOL_SCHEMA_INJECT=${TOOL_SCHEMA_INJECT:-0}
+
 # Reward: math_dapo defaults to {-1,+1}. Set MATH_REWARD_POSITIVE_ONLY=1 to
 # switch to {0,1} so scale matches code / search EM rewards.
 export MATH_REWARD_POSITIVE_ONLY=${MATH_REWARD_POSITIVE_ONLY:-1}
