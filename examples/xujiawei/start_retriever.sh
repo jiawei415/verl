@@ -14,6 +14,9 @@
 #   FORCE_RESYNC=1       Remove .ready and re-rsync
 #   SKIP_PIP=1           Skip fastapi/starlette/faiss-cpu install
 #   KEEP_ALIVE=0         Disable GPU keep-alive burst (default on for mlx workers)
+#   FOREGROUND=1         Don't return after health check — tail $RETRIEVER_LOG
+#                        so log streams to the terminal. Ctrl-C exits tail;
+#                        server + keep_alive keep running in the background.
 #
 # Usage:
 #   bash examples/xujiawei/start_retriever.sh
@@ -103,6 +106,11 @@ for i in $(seq 1 120); do
                 --burst_iters "$KEEP_ALIVE_BURST" \
                 > "$KEEP_ALIVE_LOG" 2>&1 </dev/null &
             disown
+        fi
+        # ---- Foreground: stream logs to the terminal (Ctrl-C exits tail; server keeps running). ----
+        if [[ "${FOREGROUND:-0}" == "1" ]]; then
+            echo "[start_retriever] FOREGROUND=1 -> tailing $RETRIEVER_LOG (Ctrl-C to detach; server stays up)"
+            exec tail -n +1 -F "$RETRIEVER_LOG"
         fi
         exit 0
     fi
