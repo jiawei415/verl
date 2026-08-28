@@ -26,8 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${VAL_FILES:=code_multiturn/test.parquet}"
 
 # ---- Naming ----
-: "${PROJECT_NAME:=verl_code_multiturn}"
-: "${EXPERIMENT_NAME:=grpo_qwen3-8b-base_cf_lcb}"
+: "${EXPERIMENT_NAME:=grpo_code_multiturn}"
 
 source "$SCRIPT_DIR/common.sh"
 

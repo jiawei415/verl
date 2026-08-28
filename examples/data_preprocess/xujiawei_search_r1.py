@@ -46,17 +46,115 @@ USER_CONTENT_PREFIX = (
     "<answer> Beijing </answer>. Question: "
 )
 
+# --- With-system-prompt (WSP) template ------------------------------------------
+# Longer, tutorial-style system message plus a single-turn worked example, mirroring
+# the code / math multi-turn scripts so base models get a strong format anchor
+# before RL exploration.
+SYSTEM_CONTENT_WSP = """You are a helpful assistant that answers questions by iteratively reasoning and searching Wikipedia.
 
-def _build_row(row, split_name: str, row_index: int) -> pd.Series:
-    """Transform one raw HF row into verl format."""
+## Workflow
+
+1. Read the question. Write a short reasoning inside <think> and </think>.
+2. If you lack knowledge, call the search engine by writing exactly:
+     <tool_call> your query string </tool_call>
+   The system will return the top passages between <tool_response> and </tool_response>.
+3. After each tool response, add another <think>...</think> block to analyze the results and plan the next step.
+4. Repeat steps 2-3 as many times as you need. Prefer short, focused queries over long paragraphs.
+5. Once you have enough information, output the final answer inside <answer> and </answer>. Keep the answer short -- a single entity, name, number, or short phrase. Do NOT explain.
+
+## Tag rules
+
+- `<tool_call>` contains a bare query string, NOT JSON, NOT a function schema.
+- Every `<tool_call>` must be closed with `</tool_call>`; then STOP and wait for the `<tool_response>` block.
+- The final answer appears exactly ONCE, at the very end, inside `<answer>` and `</answer>`.
+- Do NOT invent tool responses. Wait for the actual `<tool_response>` block.
+
+## Example
+
+Question: When did Albert Einstein win the Nobel Prize in Physics?
+<think> I need to look up when Einstein won the Nobel Prize. </think>
+<tool_call> Albert Einstein Nobel Prize Physics year </tool_call>
+<tool_response>
+[1] "Einstein was awarded the 1921 Nobel Prize in Physics for his discovery of the photoelectric effect..."
+</tool_response>
+<think> The result says 1921. </think>
+<answer> 1921 </answer>"""
+
+USER_CONTENT_PREFIX_WSP = "Question: "
+
+# --- WSP with Search-R1 original tags -------------------------------------------
+# Same layout as WSP but uses the Search-R1 paper's <search>...</search> and
+# <information>...</information> tags, which are closer to base pretrain
+# distribution (wiki article + citation style) than the Qwen SFT-flavoured
+# <tool_call>/<tool_response> tags.
+SYSTEM_CONTENT_WSP_SR = """You are a helpful assistant that answers questions by iteratively reasoning and searching Wikipedia.
+
+## Workflow
+
+1. Read the question. Write a short reasoning inside <think> and </think>.
+2. If you lack knowledge, call the search engine by writing exactly:
+     <search> your query string </search>
+   The system will return the top passages between <information> and </information>.
+3. After each information block, add another <think>...</think> block to analyze the results and plan the next step.
+4. Repeat steps 2-3 as many times as you need. Prefer short, focused queries over long paragraphs.
+5. Once you have enough information, output the final answer inside <answer> and </answer>. Keep the answer short -- a single entity, name, number, or short phrase. Do NOT explain.
+
+## Tag rules
+
+- `<search>` contains a bare query string, NOT JSON, NOT a function schema.
+- Every `<search>` must be closed with `</search>`; then STOP and wait for the `<information>` block.
+- The final answer appears exactly ONCE, at the very end, inside `<answer>` and `</answer>`.
+- Do NOT invent information blocks. Wait for the actual `<information>` block.
+
+## Example
+
+Question: When did Albert Einstein win the Nobel Prize in Physics?
+<think> I need to look up when Einstein won the Nobel Prize. </think>
+<search> Albert Einstein Nobel Prize Physics year </search>
+<information>
+[1] "Einstein was awarded the 1921 Nobel Prize in Physics for his discovery of the photoelectric effect..."
+</information>
+<think> The result says 1921. </think>
+<answer> 1921 </answer>"""
+
+
+def _build_row(row, split_name: str, row_index: int, wsp: bool = False, tag_style: str = "tool_call") -> pd.Series:
+    """Transform one raw HF row into verl format.
+
+    Args:
+        wsp: If True, use the with-system-prompt template (long tutorial system
+            content + worked single-turn example, user turn only carries the
+            question). If False, keep the Search-R1 official layout (no system
+            message, protocol lives in the user turn).
+        tag_style: Which tag pair to teach in the WSP system prompt. One of:
+            - ``tool_call`` (default): `<tool_call>` / `<tool_response>`,
+              matches SearchR1ToolParser out of the box.
+            - ``search``: `<search>` / `<information>`, the Search-R1 paper's
+              original tags -- closer to base pretrain distribution but the
+              tool parser + tool_agent_loop need matching updates before RL.
+            Only takes effect when ``wsp=True``.
+    """
     question = row.get("question", "")
-    user_content = USER_CONTENT_PREFIX.rstrip("\n") + question
-    # Search-R1 official protocol targets base models with no system prompt:
-    # the entire tool-use spec lives inside the user turn, matching
-    # https://github.com/PeterGriffinJin/Search-R1/blob/main/scripts/data_process/nq_search.py
-    prompt = [
-        {"role": "user", "content": user_content},
-    ]
+    if wsp:
+        user_content = USER_CONTENT_PREFIX_WSP + question
+        if tag_style == "search":
+            sys_content = SYSTEM_CONTENT_WSP_SR
+        elif tag_style == "tool_call":
+            sys_content = SYSTEM_CONTENT_WSP
+        else:
+            raise ValueError(f"unknown tag_style={tag_style!r}, expected tool_call | search")
+        prompt = [
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": user_content},
+        ]
+    else:
+        user_content = USER_CONTENT_PREFIX.rstrip("\n") + question
+        # Search-R1 official protocol targets base models with no system prompt:
+        # the entire tool-use spec lives inside the user turn, matching
+        # https://github.com/PeterGriffinJin/Search-R1/blob/main/scripts/data_process/nq_search.py
+        prompt = [
+            {"role": "user", "content": user_content},
+        ]
 
     reward_model_data = row.get("reward_model")
     if isinstance(reward_model_data, dict) and "ground_truth" in reward_model_data:
@@ -97,11 +195,11 @@ def _build_row(row, split_name: str, row_index: int) -> pd.Series:
     )
 
 
-def _process_split(df_raw: pd.DataFrame, split_name: str) -> pd.DataFrame:
-    logger.info(f"Processing split={split_name}, rows={len(df_raw)}")
+def _process_split(df_raw: pd.DataFrame, split_name: str, wsp: bool = False, tag_style: str = "tool_call") -> pd.DataFrame:
+    logger.info(f"Processing split={split_name}, wsp={wsp}, tag_style={tag_style}, rows={len(df_raw)}")
     df_raw = df_raw.reset_index(drop=True)
     return df_raw.apply(
-        lambda r: _build_row(r, split_name=split_name, row_index=int(r.name)), axis=1
+        lambda r: _build_row(r, split_name=split_name, row_index=int(r.name), wsp=wsp, tag_style=tag_style), axis=1
     )
 
 
@@ -136,16 +234,39 @@ def main():
         default=500,
         help="Rows kept per sub-dataset in the val split.",
     )
+    parser.add_argument(
+        "--with_system_prompt",
+        action="store_true",
+        help="Use the with-system-prompt (WSP) template and write to "
+        "{train,test}_wsp[_sr].parquet instead of overwriting the default files.",
+    )
+    parser.add_argument(
+        "--tag_style",
+        choices=("tool_call", "search"),
+        default="tool_call",
+        help="Which tag pair the WSP system prompt teaches: "
+        "`tool_call` -> <tool_call>/<tool_response> (default, matches "
+        "SearchR1ToolParser); `search` -> <search>/<information> "
+        "(Search-R1 paper's original tags, closer to base pretrain "
+        "distribution). Only meaningful with --with_system_prompt.",
+    )
     args = parser.parse_args()
 
+    if args.tag_style != "tool_call" and not args.with_system_prompt:
+        parser.error("--tag_style only has an effect with --with_system_prompt")
+
     os.makedirs(args.dst_dir, exist_ok=True)
+    if args.with_system_prompt:
+        suffix = "_wsp_sr" if args.tag_style == "search" else "_wsp"
+    else:
+        suffix = ""
     with tempfile.TemporaryDirectory() as tmp_dl:
         for split in ("train", "test"):
-            fname = f"{split}.parquet"
-            logger.info(f"Downloading {fname} from {args.hf_repo_id}")
+            src_fname = f"{split}.parquet"
+            logger.info(f"Downloading {src_fname} from {args.hf_repo_id}")
             local_path = hf_hub_download(
                 repo_id=args.hf_repo_id,
-                filename=fname,
+                filename=src_fname,
                 repo_type="dataset",
                 local_dir=tmp_dl,
                 local_dir_use_symlinks=False,
@@ -156,8 +277,9 @@ def main():
             if split == "test":
                 df_raw = _sample_val(df_raw, args.val_per_subset)
 
-            df_out = _process_split(df_raw, split_name=split)
-            out_path = os.path.join(args.dst_dir, fname)
+            df_out = _process_split(df_raw, split_name=split, wsp=args.with_system_prompt, tag_style=args.tag_style)
+            out_fname = f"{split}{suffix}.parquet"
+            out_path = os.path.join(args.dst_dir, out_fname)
             _atomic_write(df_out, out_path)
             logger.info(f"Wrote {out_path}  rows={len(df_out)}")
 

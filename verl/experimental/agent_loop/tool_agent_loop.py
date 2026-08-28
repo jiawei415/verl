@@ -167,7 +167,15 @@ class ToolAgentLoop(AgentLoopBase):
         audios = multi_modal_data.get("audios")
         mm_processor_kwargs = self._get_mm_processor_kwargs(audios)
 
-        metrics = {} 
+        # Counter defaults so AgentLoopMetrics gets non-null values even on
+        # zero-turn / early-termination runs.
+        metrics = {
+            "assistant_turns": 0,
+            "tool_call_turns": 0,
+            "tool_calls_ok": 0,
+            "tool_calls_err": 0,
+            "termination_reason": "unknown",
+        }
         tools_kwargs = kwargs.get("tools_kwargs", {})
 
         agent_data = AgentData(
@@ -308,6 +316,7 @@ class ToolAgentLoop(AgentLoopBase):
                     agent_data.extra_fields[key] = int(agent_data.extra_fields[key]) + int(output.extra_fields[key])
 
         agent_data.assistant_turns += 1
+        agent_data.metrics["assistant_turns"] = agent_data.assistant_turns
         agent_data.response_ids = output.token_ids
         agent_data.prompt_ids += agent_data.response_ids
         agent_data.response_mask += [1] * len(agent_data.response_ids)
@@ -345,14 +354,17 @@ class ToolAgentLoop(AgentLoopBase):
         if not ignore_termination and len(agent_data.response_mask) >= self.response_length:
             if _dbg:
                 print(f"{_tag} TERM response_length_hit asst={agent_data.assistant_turns}", flush=True)
+            agent_data.metrics["termination_reason"] = "response_length_hit"
             return AgentState.TERMINATED
         if self.max_assistant_turns and agent_data.assistant_turns >= self.max_assistant_turns:
             if _dbg:
                 print(f"{_tag} TERM max_assistant_turns asst={agent_data.assistant_turns}", flush=True)
+            agent_data.metrics["termination_reason"] = "max_assistant_turns"
             return AgentState.TERMINATED
         if self.max_user_turns and agent_data.user_turns >= self.max_user_turns:
             if _dbg:
                 print(f"{_tag} TERM max_user_turns user={agent_data.user_turns}", flush=True)
+            agent_data.metrics["termination_reason"] = "max_user_turns"
             return AgentState.TERMINATED
 
         # Extract tool calls (use per-sample tools if routed)
@@ -366,10 +378,12 @@ class ToolAgentLoop(AgentLoopBase):
                 print(f"{_tag}   call[{i}]: {c.name}({_args[:200]})", flush=True)
 
         if agent_data.tool_calls:
+            agent_data.metrics["tool_call_turns"] = agent_data.metrics.get("tool_call_turns", 0) + 1
             return AgentState.PROCESSING_TOOLS
         else:
             if _dbg:
                 print(f"{_tag} TERM no_tool_call asst={agent_data.assistant_turns}", flush=True)
+            agent_data.metrics["termination_reason"] = "no_tool_call"
             return AgentState.TERMINATED
 
     async def _handle_processing_tools_state(self, agent_data: AgentData) -> AgentState:
@@ -385,6 +399,16 @@ class ToolAgentLoop(AgentLoopBase):
 
         with simple_timer("tool_calls", agent_data.metrics):
             responses = await asyncio.gather(*tasks)
+        # Classify each tool response as ok / err by the conventional
+        # `[<name>_error]` / `[<name>_unavailable]` marker used by
+        # examples/xujiawei/{search,code_multiturn}_tool.py.
+        for tool_response, _, _ in responses:
+            text = tool_response.text or ""
+            head = text.lstrip()[:32]
+            if head.startswith("[") and ("_error]" in head or "_unavailable]" in head):
+                agent_data.metrics["tool_calls_err"] = agent_data.metrics.get("tool_calls_err", 0) + 1
+            else:
+                agent_data.metrics["tool_calls_ok"] = agent_data.metrics.get("tool_calls_ok", 0) + 1
         if _dbg_enabled(agent_data.request_id):
             _tag = _dbg_tag(agent_data.request_id)
             print(f"{_tag} tool_exec done n={len(responses)} names={tool_call_names}", flush=True)
@@ -479,6 +503,7 @@ class ToolAgentLoop(AgentLoopBase):
             )
 
         if len(agent_data.response_mask) + len(response_ids) >= self.response_length:
+            agent_data.metrics["termination_reason"] = "response_length_hit"
             return AgentState.TERMINATED
         # Update prompt_ids and response_mask
 

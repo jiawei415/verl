@@ -15,6 +15,14 @@ export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 # still runs — it reads raw output text, not the injected schema.
 export TOOL_SCHEMA_INJECT=${TOOL_SCHEMA_INJECT:-0}
 
+# Base-model raw-text prompt mode. When RAW_PROMPT=1, apply_chat_template is
+# bypassed and messages are concatenated as raw text before tokenization.
+# Mirrors Search-R1's official base RL recipe; matters because Qwen/LLaMA
+# chat templates wrap user turns in `<|im_start|>...<|im_end|>` markers the
+# base pretrain distribution never saw, which cripples in-context tag learning.
+# Default off; set RAW_PROMPT=1 for base models (Qwen3-*-Base, LLaMA3-*-Base).
+export RAW_PROMPT=${RAW_PROMPT:-0}
+
 # Reward: math_dapo defaults to {-1,+1}. Set MATH_REWARD_POSITIVE_ONLY=1 to
 # switch to {0,1} so scale matches code / search EM rewards.
 export MATH_REWARD_POSITIVE_ONLY=${MATH_REWARD_POSITIVE_ONLY:-1}

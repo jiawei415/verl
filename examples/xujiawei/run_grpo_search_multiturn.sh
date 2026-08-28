@@ -21,13 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${VAL_FILES:=search_multiturn/test.parquet}"
 
 # ---- Naming ----
-: "${PROJECT_NAME:=verl_search_multiturn}"
-: "${EXPERIMENT_NAME:=grpo_qwen3-4b-base_search_r1}"
-
-# ---- Model: use base (bare-query Search-R1 protocol). Instruction-tuned
-# models emit Hermes JSON inside <tool_call>, which the search_r1 parser
-# does not decode — use format=hermes if you must train an Instruct model.
-: "${MODEL_NAME:=Qwen3-4B-Base}"
+: "${EXPERIMENT_NAME:=grpo_search_multiturn}"
 
 source "$SCRIPT_DIR/common.sh"
 

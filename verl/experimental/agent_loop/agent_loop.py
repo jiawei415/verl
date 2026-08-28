@@ -84,6 +84,19 @@ class AgentLoopMetrics(BaseModel):
     compute_score: float = 0.0
     num_preempted: int = -1  # -1 means not available
 
+    # Per-rollout tool-usage / termination counters. `tool_agent_loop.py` fills
+    # these; `_performance_metrics` aggregates them into batch-level ratios.
+    assistant_turns: int = 0
+    """Total assistant turns emitted this rollout."""
+    tool_call_turns: int = 0
+    """Assistant turns that emitted at least one <tool_call> (parseable)."""
+    tool_calls_ok: int = 0
+    """Individual tool invocations whose response does not start with `[..._error]` / `[..._unavailable]`."""
+    tool_calls_err: int = 0
+    """Individual tool invocations whose response starts with an error marker."""
+    termination_reason: str = "unknown"
+    """One of: response_length_hit, max_assistant_turns, max_user_turns, no_tool_call, unknown."""
+
 
 class AgentLoopOutput(BaseModel):
     """Agent loop output."""
@@ -291,7 +304,32 @@ class AgentLoopBase(ABC):
         Returns:
             list[int]: Prompt token ids.
         """
-        if self.processor is not None:
+        # Base-model raw-text mode: skip chat_template entirely and just
+        # concatenate message contents. Set RAW_PROMPT=1 to enable. This
+        # mirrors Search-R1's official base-model recipe, which never calls
+        # `apply_chat_template` -- important because Qwen/LLaMA chat templates
+        # wrap user turns in `<|im_start|>user\n...<|im_end|>` (Qwen) or
+        # `[INST]...[/INST]` (LLaMA) tokens that base models were never trained
+        # on. Doing so confuses base pretrain distribution and cripples
+        # in-context tool-format learning.
+        if os.environ.get("RAW_PROMPT", "0") == "1":
+            parts: list[str] = []
+            for m in messages:
+                c = m.get("content")
+                if isinstance(c, str):
+                    parts.append(c)
+                elif isinstance(c, list):
+                    # multi-modal message with content list; take text parts only
+                    for seg in c:
+                        if isinstance(seg, dict) and seg.get("type") == "text":
+                            parts.append(seg.get("text") or "")
+            raw_text = "\n".join(p for p in parts if p)
+            tokenized_prompt = await self.loop.run_in_executor(
+                None,
+                lambda: self.tokenizer.encode(raw_text, add_special_tokens=False),
+            )
+            prompt_ids = normalize_token_ids(tokenized_prompt)
+        elif self.processor is not None:
             raw_prompt = await self.loop.run_in_executor(
                 None,
                 lambda: apply_chat_template(
@@ -1143,6 +1181,48 @@ class AgentLoopManager:
         timing["agent_loop/compute_score/min"] = t_compute_score.min()
         timing["agent_loop/compute_score/max"] = t_compute_score.max()
         timing["agent_loop/compute_score/mean"] = t_compute_score.mean()
+
+        # -- Tool-usage / termination-reason aggregates ---------------------
+        # Each rollout contributes one dict; missing keys default to sensible
+        # zeros so unrelated rollouts (e.g. code / math) don't break.
+        flat = [m for chunk in metrics for m in chunk]
+        n_samples = max(1, len(flat))
+        asst_turns = np.array([int(m.get("assistant_turns", 0) or 0) for m in flat])
+        tc_turns = np.array([int(m.get("tool_call_turns", 0) or 0) for m in flat])
+        tc_ok = np.array([int(m.get("tool_calls_ok", 0) or 0) for m in flat])
+        tc_err = np.array([int(m.get("tool_calls_err", 0) or 0) for m in flat])
+        tc_total = tc_ok + tc_err
+
+        # Fraction of rollouts that never emitted a parseable tool_call.
+        timing["agent_loop/no_tool_call/ratio"] = float((tc_turns == 0).mean())
+        # Of the rollouts that DID call tools at least once: success / failure
+        # ratios at the tool-invocation level (not turn level).
+        called_mask = tc_total > 0
+        if called_mask.any():
+            timing["agent_loop/tool_call/success_ratio"] = float(
+                (tc_ok[called_mask].sum() / tc_total[called_mask].sum())
+            )
+            timing["agent_loop/tool_call/error_ratio"] = float(
+                (tc_err[called_mask].sum() / tc_total[called_mask].sum())
+            )
+        else:
+            timing["agent_loop/tool_call/success_ratio"] = 0.0
+            timing["agent_loop/tool_call/error_ratio"] = 0.0
+        timing["agent_loop/tool_call/calls_per_rollout_mean"] = float(tc_total.mean())
+        timing["agent_loop/tool_call/turns_per_rollout_mean"] = float(tc_turns.mean())
+
+        # Termination reason distribution -- one bucket per canonical reason.
+        term_reasons = [str(m.get("termination_reason", "unknown") or "unknown") for m in flat]
+        for reason in (
+            "response_length_hit",
+            "max_assistant_turns",
+            "max_user_turns",
+            "no_tool_call",
+            "unknown",
+        ):
+            timing[f"agent_loop/termination/{reason}/ratio"] = float(
+                sum(1 for r in term_reasons if r == reason) / n_samples
+            )
 
         # batch sequence generation is bounded by the slowest sample
         slowest = np.argmax(t_generate_sequences + t_tool_calls + t_compute_score)
