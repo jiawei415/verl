@@ -437,8 +437,17 @@ class ToolAgentLoop(AgentLoopBase):
                     content.append({"type": "text", "text": tool_response.text})
                 message = {"role": "tool", "content": content}
             else:
-                # Text-only content
-                message = {"role": "tool", "content": tool_response.text or ""}
+                # Text-only content. Optionally wrap in a `<TAG>...</TAG>`
+                # envelope so RAW_PROMPT=1 rollouts (which skip chat_template
+                # and concat message contents raw) still surface the retrieval
+                # payload with the tag the model's system prompt teaches --
+                # e.g. TOOL_RESPONSE_TAG=information reproduces Search-R1's
+                # `<information>...</information>` block. No-op when unset.
+                raw_text = tool_response.text or ""
+                _wrap = os.environ.get("TOOL_RESPONSE_TAG", "").strip()
+                if _wrap:
+                    raw_text = f"<{_wrap}>\n{raw_text}\n</{_wrap}>"
+                message = {"role": "tool", "content": raw_text}
 
             add_messages.append(message)
 

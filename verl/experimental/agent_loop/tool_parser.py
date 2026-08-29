@@ -478,3 +478,44 @@ class SearchR1ToolParser(ToolParser):
 
         content = self.tool_call_regex.sub("", text)
         return content, function_calls
+
+
+@ToolParser.register("search_r1_native")
+class SearchR1NativeToolParser(ToolParser):
+    """Search-R1 paper's native tags: `<search>...</search>` for the query,
+    `<information>...</information>` for the retrieved passages.
+
+    Matches ``scripts/data_process/nq_search.py`` in
+    https://github.com/PeterGriffinJin/Search-R1 exactly (aside from the
+    ``<answer>`` wrapper, which we still expect). The parser only differs
+    from SearchR1ToolParser in the tag names -- both work at the decoded-text
+    level, so tokenizers that split ``</search>`` across multiple tokens
+    (Qwen3-Base) still parse fine.
+    """
+
+    def __init__(self, tokenizer) -> None:
+        super().__init__(tokenizer)
+        self.tool_call_start_token = "<search>"
+        self.tool_call_end_token = "</search>"
+        self.tool_call_regex = regex.compile(r"<search>(.*?)</search>", regex.DOTALL)
+
+    @rollout_trace_op
+    async def extract_tool_calls(
+        self, responses_ids: list[int], tools: list[OpenAIFunctionToolSchema] = None
+    ) -> tuple[str, list[FunctionCall]]:
+        loop = get_event_loop()
+        text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
+        if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
+            return text, []
+
+        function_calls: list[FunctionCall] = []
+        for match in self.tool_call_regex.findall(text):
+            query = match.strip()
+            if not query:
+                continue
+            function_calls.append(
+                FunctionCall(name="search", arguments=json.dumps({"query": query}, ensure_ascii=False))
+            )
+
+        content = self.tool_call_regex.sub("", text)
+        return content, function_calls
