@@ -53,8 +53,17 @@ train_batch_size=${TRAIN_BATCH_SIZE:-64}
 ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE:-64}
 max_prompt_length=${MAX_PROMPT_LENGTH:-1024}
 max_response_length=${MAX_RESPONSE_LENGTH:-8192}
-ppo_max_token_len_per_gpu=${PPO_MAX_TOKEN_LEN_PER_GPU:-16384}
 max_num_tokens=$(( max_prompt_length + max_response_length + 1 ))
+# PPO / log-prob micro-batch cap. Must be >= a single sequence (prompt +
+# response), otherwise verl's dynamic_bsz packing asserts and training
+# crashes at step 0. Default = max(16384, max_num_tokens) so long-response
+# scripts (e.g. MAX_RESPONSE_LENGTH=16384) auto-scale without a manual
+# override, while short-response setups keep the 16384 floor for packing.
+_ppo_max_default=16384
+if (( max_num_tokens > _ppo_max_default )); then
+    _ppo_max_default=$max_num_tokens
+fi
+ppo_max_token_len_per_gpu=${PPO_MAX_TOKEN_LEN_PER_GPU:-$_ppo_max_default}
 actor_lr=${ACTOR_LR:-1e-6}
 total_epochs=${TOTAL_EPOCHS:-15}
 
@@ -108,7 +117,7 @@ COMMON_TRAINER=(
     trainer.nnodes=${NNODES}
     trainer.max_actor_ckpt_to_keep=2
     trainer.val_before_train=${VAL_BEFORE_TRAIN:-True}
-    trainer.log_val_generations=${LOG_VAL_GENERATIONS:-50}
+    trainer.log_val_generations=${LOG_VAL_GENERATIONS:-10}
     trainer.total_epochs=${total_epochs}
 )
 
