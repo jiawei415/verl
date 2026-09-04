@@ -19,7 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MAX_PROMPT_LENGTH:=4096}"
 : "${ROLLOUT_TP:=4}"
 : "${ROLLOUT_GPU_MEM_UTIL:=0.5}"
-: "${ROLLOUT_MODE:=async}"
 
 # ---- Data ----
 : "${TRAIN_FILES:=code_multiturn/train.parquet}"

@@ -172,7 +172,6 @@ build_common_arrays() {
     )
     COMMON_ROLLOUT=(
         actor_rollout_ref.rollout.name=vllm
-        actor_rollout_ref.rollout.mode=${ROLLOUT_MODE:-sync}
         actor_rollout_ref.rollout.max_model_len=${max_num_tokens}
         actor_rollout_ref.rollout.tensor_model_parallel_size=${rollout_tp}
         actor_rollout_ref.rollout.gpu_memory_utilization=${rollout_gpu_mem_util}

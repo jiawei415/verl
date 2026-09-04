@@ -11,7 +11,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Multi-turn responses are long; bump defaults before sourcing common.
 : "${ROLLOUT_TP:=4}"
 : "${ROLLOUT_GPU_MEM_UTIL:=0.5}"
-: "${ROLLOUT_MODE:=async}"
 # Point to the tool-use-aware dataset (system prompt injected).
 : "${TRAIN_FILES:=math_multiturn/dapo_train.parquet}"
 : "${VAL_FILES:=math_multiturn/gsm8k_test.parquet math_multiturn/math500_test.parquet math_multiturn/aime24_test.parquet math_multiturn/aime25_test.parquet}"

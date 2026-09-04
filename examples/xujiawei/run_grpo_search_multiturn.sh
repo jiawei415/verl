@@ -14,7 +14,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---- Multi-turn / long-response defaults (before common.sh so they win) ----
 : "${ROLLOUT_TP:=4}"
 : "${ROLLOUT_GPU_MEM_UTIL:=0.6}"
-: "${ROLLOUT_MODE:=async}"
 
 # ---- Data ----
 : "${TRAIN_FILES:=search_multiturn/train.parquet}"
