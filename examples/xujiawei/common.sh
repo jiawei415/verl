@@ -106,8 +106,24 @@ COMMON_DATA=(
     # Bypass-mode policy loss: ratio uses rollout_log_probs as `old`, but the
     # training-side old_log_probs are still computed for diagnostics (Σπ²,
     # entropy) and surfaced via `rollout_corr/*` metrics (kl/ppl/chi²).
+    # Default loss_type=reinforce -> explicit IS weights, no PPO clipping;
+    # set ROLLOUT_CORR_LOSS_TYPE=ppo_clip to fall back to the clipped objective.
     algorithm.rollout_correction.bypass_mode=${ROLLOUT_CORR_BYPASS:-True}
-    algorithm.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-ppo_clip}
+    algorithm.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-reinforce}
+    # Importance sampling / rejection sampling knobs; both off by default.
+    # Enable per-experiment via env:
+    #   ROLLOUT_IS=token|sequence           IS aggregation level
+    #   ROLLOUT_IS_THRESHOLD=2.0|lower_upper  TIS upper bound or IcePop bounds
+    #   ROLLOUT_IS_BATCH_NORMALIZE=True     normalize IS weights to mean=1
+    #   ROLLOUT_RS=token_k1|seq_sum_k1|seq_mean_k3|seq_max_k2   RS aggregation
+    #   ROLLOUT_RS_THRESHOLD=<float|string>  RS cutoff
+    #   ROLLOUT_CORR_MONITOR_ONLY=True      compute metrics only, don't touch loss
+    algorithm.rollout_correction.rollout_is=${ROLLOUT_IS:-null}
+    algorithm.rollout_correction.rollout_is_threshold=${ROLLOUT_IS_THRESHOLD:-2.0}
+    algorithm.rollout_correction.rollout_is_batch_normalize=${ROLLOUT_IS_BATCH_NORMALIZE:-False}
+    algorithm.rollout_correction.rollout_rs=${ROLLOUT_RS:-null}
+    algorithm.rollout_correction.rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-null}
+    algorithm.rollout_correction.monitor_only=${ROLLOUT_CORR_MONITOR_ONLY:-False}
 )
 
 COMMON_TRAINER=(
@@ -163,12 +179,18 @@ build_common_arrays() {
         # min-p gradient masking on training logits (same value as sampling min-p
         # by default -- MIN_P=0 disables).
         actor_rollout_ref.actor.train_min_p=${min_p}
-        # Worker-side mirror of bypass-mode settings. Ray workers read this at
-        # init time; the driver-side `apply_bypass_mode` mutation is a no-op
-        # for already-instantiated workers.
+        # Worker-side mirror of bypass-mode + IS/RS settings. Ray workers read
+        # these at init time; the driver-side mutation is a no-op for
+        # already-instantiated workers, so we replicate every knob here.
         actor_rollout_ref.actor.policy_loss.loss_mode=${ROLLOUT_CORR_LOSS_MODE:-bypass_mode}
         actor_rollout_ref.actor.policy_loss.rollout_correction.bypass_mode=${ROLLOUT_CORR_BYPASS:-True}
-        actor_rollout_ref.actor.policy_loss.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-ppo_clip}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.loss_type=${ROLLOUT_CORR_LOSS_TYPE:-reinforce}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.rollout_is=${ROLLOUT_IS:-null}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.rollout_is_threshold=${ROLLOUT_IS_THRESHOLD:-2.0}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.rollout_is_batch_normalize=${ROLLOUT_IS_BATCH_NORMALIZE:-False}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.rollout_rs=${ROLLOUT_RS:-null}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-null}
+        actor_rollout_ref.actor.policy_loss.rollout_correction.monitor_only=${ROLLOUT_CORR_MONITOR_ONLY:-False}
     )
     COMMON_ROLLOUT=(
         actor_rollout_ref.rollout.name=vllm
