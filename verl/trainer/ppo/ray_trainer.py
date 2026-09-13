@@ -1292,7 +1292,20 @@ class RayPPOTrainer:
         routed_experts = tu.get(output, "routed_experts")
         sum_pi_squared = tu.get(output, "sum_pi_squared") if calculate_sum_pi_squared else None
 
-        old_log_prob_mfu = tu.get(output, "metrics")["mfu"]
+        # `tu.get(output, "metrics")` may return either a dict-of-lists
+        # (already aggregated across workers) or a list-of-dicts (one entry per
+        # worker), depending on the transferqueue backend. Normalise to a
+        # scalar mfu so downstream `.meta_info["mfu"]` bookkeeping stays typed.
+        _metrics = tu.get(output, "metrics")
+        if isinstance(_metrics, dict):
+            _mfu_val = _metrics.get("mfu", 0.0)
+        elif isinstance(_metrics, list) and _metrics:
+            _mfu_val = [m.get("mfu", 0.0) for m in _metrics if isinstance(m, dict)]
+        else:
+            _mfu_val = 0.0
+        if isinstance(_mfu_val, list):
+            _mfu_val = float(np.mean(_mfu_val)) if _mfu_val else 0.0
+        old_log_prob_mfu = _mfu_val
         # step 4. No padding to padding
         entropy = no_padding_2_padding(entropy, batch_td)
         log_probs = no_padding_2_padding(log_probs, batch_td)
