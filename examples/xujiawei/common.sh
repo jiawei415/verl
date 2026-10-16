@@ -143,7 +143,16 @@ setup_output() {
     local proj="$1"
     local exp="$2"
     output_path=${OUTPUT_PATH:-$CKPT_PATH/$proj/$exp}
-    export WANDB_DIR=$output_path
+    # Keep ckpt / tb on HDFS, but wandb needs a local-fs dir because its
+    # multi-process daemon uses unix sockets that HDFS FUSE doesn't support
+    # (symptom: `wandb.errors.UsageError: Error communicating with wandb
+    # process`). Override via WANDB_DIR / WANDB_LOCAL_ROOT.
+    # local wandb_root=${WANDB_LOCAL_ROOT:-/tmp/wandb}
+    # local wandb_dir="$wandb_root/${proj}/${exp}"
+    mkdir -p "/tmp/wandb/"
+    export WANDB_DIR="/tmp/wandb/${exp}"
+    export WANDB_CACHE_DIR="/tmp/wandb-cache"
+    export WANDB_CONFIG_DIR="/tmp/wandb-config"
     export TENSORBOARD_DIR=$output_path
 }
 
