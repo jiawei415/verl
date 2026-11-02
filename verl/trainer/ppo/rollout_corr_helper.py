@@ -1126,6 +1126,9 @@ def apply_bypass_mode(
 
     Both loss types benefit from rejection sampling (RS) which masks out-of-distribution samples.
 
+    Binary DPPO losses are preserved: they implement their own divergence mask
+    and truncated importance ratio, using the substituted rollout probabilities.
+
     Note:
         The implementation is copied from szrlee <szrlee@gmail.com>.
     """
@@ -1143,5 +1146,10 @@ def apply_bypass_mode(
     with open_dict(policy_loss_config):
         # Pass rollout_correction config to actor for loss computation and metrics
         policy_loss_config["rollout_correction"] = rollout_corr_config
-        # Always use bypass_mode loss function which handles both loss_types
-        policy_loss_config["loss_mode"] = "bypass_mode"
+        # Binary DPPO already implements truncated IS and must retain its
+        # divergence mask. Substituting rollout probabilities above makes both
+        # its trust region and IS ratio match Stable-RL's behavior policy.
+        if policy_loss_config.get("loss_mode") not in {
+            "dppo_tv", "dppo_kl", "dppo_binary_tv", "dppo_binary_kl"
+        }:
+            policy_loss_config["loss_mode"] = "bypass_mode"

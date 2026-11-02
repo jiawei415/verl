@@ -1369,6 +1369,7 @@ def compute_policy_loss_vanilla(
     return pg_loss, pg_metrics
 
 
+@register_policy_loss("dppo_binary_tv")
 @register_policy_loss("dppo_tv")
 def compute_policy_loss_dppo_tv(
     old_log_prob: torch.Tensor,
@@ -1450,6 +1451,7 @@ def compute_policy_loss_dppo_tv(
     return pg_loss, pg_metrics
 
 
+@register_policy_loss("dppo_binary_kl")
 @register_policy_loss("dppo_kl")
 def compute_policy_loss_dppo_kl(
     old_log_prob: torch.Tensor,

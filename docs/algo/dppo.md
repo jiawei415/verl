@@ -43,6 +43,28 @@ LOSS_MODE=vanilla CLIP_LOW=0.2 CLIP_HIGH=0.2 bash examples/dppo_trainer/run_qwen
 LOSS_MODE=vanilla CLIP_LOW=0.2 CLIP_HIGH=0.28 bash examples/dppo_trainer/run_qwen3_30b_a3b_megatron.sh
 ```
 
+## xujiawei FSDP math script
+
+The existing math script supports Stable-RL's Binary-TV and Binary-KL objectives
+with GRPO advantages:
+
+```bash
+LOSS_MODE=dppo_tv bash examples/xujiawei/run_grpo_math.sh
+LOSS_MODE=dppo_kl bash examples/xujiawei/run_grpo_math.sh
+```
+
+The Stable-RL names `dppo_binary_tv` and `dppo_binary_kl` are also accepted.
+Without `LOSS_MODE`, the script retains its existing behavior. DPPO uses rollout
+log probabilities for both the divergence mask and importance ratio; bypass
+initialization preserves the DPPO loss instead of switching to REINFORCE.
+`CLIP_RATIO_LOW` and `CLIP_RATIO_HIGH` set divergence thresholds (both default to
+0.15 for TV, 0.05 for KL). `CLIP_RATIO_C` caps the detached importance ratio
+(default 10, matching Stable-RL's loss default). These are starting settings,
+not a reproduction of the paper's complete model/data/hyperparameter recipe.
+Additional `ROLLOUT_IS`/`ROLLOUT_RS` must remain `null`, and
+`ROLLOUT_CORR_BYPASS` must remain `True` for this script's DPPO recipe.
+Top-K divergence and the Stable-RL `_recompute` variants are not exposed by this recipe.
+
 ## 📖Introduction
 
 <div align="left">
