@@ -2,17 +2,45 @@
 # Shared environment/knobs for xujiawei training scripts.
 # Sourced by run_*.sh; do NOT execute directly.
 
+# run_*.sh enable xtrace; suppress it while loading credentials.
+_wandb_restore_xtrace=0
+case "$-" in *x*) _wandb_restore_xtrace=1; set +x ;; esac
 export VLLM_USE_V1=1
 export WANDB_OFFICIAL=1
-export WANDB_API_KEY=2e430da03653e9b9961aaa2a0facadd7fe45204a
+export WANDB_API_KEY="${WANDB_API_KEY:-2e430da03653e9b9961aaa2a0facadd7fe45204a}"
 # export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
 # export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
 
-# W&B must connect directly: the corporate proxy returns 403 for its API.
-# Commenting out proxy exports does not remove proxies inherited from the shell.
-# Preserve existing exclusions and other services' proxy settings.
-export no_proxy="${no_proxy:+${no_proxy},}${NO_PROXY:+${NO_PROXY},}wandb.ai,.wandb.ai,coreweave.com,.coreweave.com"
+# Direct mode bypasses inherited proxies. A dedicated relay is opt-in.
+export WANDB_BASE_URL=${WANDB_BASE_URL:-https://api.wandb.ai}
+export WANDB_MODE=${WANDB_MODE:-online}
+_wandb_no_proxy=""
+if [[ -n ${WANDB_HTTPS_PROXY:-} ]]; then
+    export WANDB_HTTP_PROXY="$WANDB_HTTPS_PROXY"
+    _wandb_extra="localhost,127.0.0.1,::1"
+else
+    unset WANDB_HTTP_PROXY WANDB_HTTPS_PROXY
+    _wandb_extra="wandb.ai,.wandb.ai,coreweave.com,.coreweave.com"
+fi
+IFS=',' read -ra _wandb_exclusions <<< "${no_proxy:-},${NO_PROXY:-},${_wandb_extra}"
+for _wandb_host in "${_wandb_exclusions[@]}"; do
+    [[ -z $_wandb_host ]] && continue
+    if [[ -n ${WANDB_HTTPS_PROXY:-} ]]; then
+        # Preserve internal-network bypasses, but never bypass the W&B relay.
+        case "${_wandb_host,,}" in
+            '*'|ai|.ai|com|.com|wandb.ai|*.wandb.ai|coreweave.com|*.coreweave.com|googleapis.com|*.googleapis.com) continue ;;
+        esac
+    fi
+    case ",${_wandb_no_proxy}," in
+        *",${_wandb_host},"*) ;;
+        *) _wandb_no_proxy="${_wandb_no_proxy:+${_wandb_no_proxy},}${_wandb_host}" ;;
+    esac
+done
+export no_proxy="$_wandb_no_proxy"
+unset _wandb_no_proxy _wandb_exclusions _wandb_host _wandb_extra
 export NO_PROXY="$no_proxy"
+if (( _wandb_restore_xtrace )); then set -x; fi
+unset _wandb_restore_xtrace
 
 # Skip tool-schema injection into chat_template. Otherwise Qwen and similar
 # tokenizers append a Hermes `# Tools ... <tool_call>{JSON}...` block to the
