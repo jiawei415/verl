@@ -5,8 +5,14 @@
 export VLLM_USE_V1=1
 export WANDB_OFFICIAL=1
 export WANDB_API_KEY=2e430da03653e9b9961aaa2a0facadd7fe45204a
-export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
-export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+# export http_proxy=http://sys-proxy-rd-relay.byted.org:8118
+# export https_proxy=http://sys-proxy-rd-relay.byted.org:8118
+
+# W&B must connect directly: the corporate proxy returns 403 for its API.
+# Commenting out proxy exports does not remove proxies inherited from the shell.
+# Preserve existing exclusions and other services' proxy settings.
+export no_proxy="${no_proxy:+${no_proxy},}${NO_PROXY:+${NO_PROXY},}wandb.ai,.wandb.ai,coreweave.com,.coreweave.com"
+export NO_PROXY="$no_proxy"
 
 # Skip tool-schema injection into chat_template. Otherwise Qwen and similar
 # tokenizers append a Hermes `# Tools ... <tool_call>{JSON}...` block to the
@@ -94,6 +100,10 @@ min_p=${MIN_P:-0.0}
 
 # ---- Shared Hydra arg arrays (algo scripts extend or override) ----
 COMMON_DATA=(
+    # Explicitly override the Ray worker environment, including when connecting
+    # to an existing cluster whose raylet inherited the corporate proxy.
+    "++ray_kwargs.ray_init.runtime_env.env_vars.no_proxy='${no_proxy}'"
+    "++ray_kwargs.ray_init.runtime_env.env_vars.NO_PROXY='${NO_PROXY}'"
     algorithm.use_kl_in_reward=False
     algorithm.kl_ctrl.kl_coef=${KL_COEF:-0.0}
     data.train_files="$train_files"
