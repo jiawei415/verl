@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 
 # These are safe to print in Hydra/Ray logs. Never put credentials here.
 ENV_KEYS = (
-    "WANDB_BASE_URL", "WANDB_ENTITY", "WANDB_MODE", "WANDB_DIR",
+    "WANDB_BACKEND", "WANDB_OFFICIAL", "WANDB_BASE_URL", "WANDB_ENTITY", "WANDB_MODE", "WANDB_DIR",
     "WANDB_CACHE_DIR", "WANDB_CONFIG_DIR", "WANDB_HTTP_PROXY", "WANDB_HTTPS_PROXY",
     "no_proxy", "NO_PROXY", "PYTHONPATH",
 )
@@ -60,6 +60,24 @@ def runtime_override(env):
 
 def check_write(config, env):
     import wandb
+
+    if env.get("WANDB_BACKEND") == "byted":
+        if wandb.__version__ != "0.14.10" or not hasattr(wandb, "TrackingApi"):
+            raise RuntimeError("byted backend requires byted-wandb==0.14.10")
+        name = f"preflight_{config.trainer.experiment_name}_{uuid.uuid4().hex[:8]}"
+        with wandb.init(project=config.trainer.project_name, name=name,
+                        config={"purpose": "training-preflight"}) as run:
+            run_id = run.id
+            run.log({"preflight/write": 1}, step=0)
+        for attempt in range(30):
+            saved = wandb.TrackingApi().run(project=config.trainer.project_name, run_id=run_id)
+            rows = saved.scan_history(name=["preflight/write"])
+            if 1 in rows.get("preflight/write", []):
+                print(f"Byted W&B write/readback passed: {saved.link}", flush=True)
+                return
+            if attempt < 29:
+                time.sleep(2)
+        raise RuntimeError(f"Byted W&B metrics did not sync: {run_id}")
 
     if wandb.__version__ != "0.23.1":
         raise RuntimeError(

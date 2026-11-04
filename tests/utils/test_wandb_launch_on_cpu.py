@@ -37,7 +37,7 @@ def shell_environment(extra):
     result = subprocess.run(
         ["bash", "-c", 'set -eu; source examples/xujiawei/common.sh; source examples/xujiawei/common.sh; '
          'python3 -c \'import os,json; print(json.dumps({k:v for k,v in os.environ.items() '
-         'if k in ("no_proxy","NO_PROXY","WANDB_HTTPS_PROXY","WANDB_API_KEY")}))\''],
+         'if k in ("no_proxy","NO_PROXY","WANDB_HTTPS_PROXY","WANDB_API_KEY","WANDB_OFFICIAL","WANDB_BACKEND","WANDB_BASE_URL","WANDB_ENTITY")}))\''],
         cwd=ROOT, env=env, capture_output=True, text=True, check=True,
     )
     return json.loads(result.stdout)
@@ -171,3 +171,52 @@ def test_preflight_override_composes_with_training_config(monkeypatch):
         final = compose(config_name="ppo_trainer", overrides=["trainer.project_name=actual_target", override])
     assert final.trainer.project_name == "actual_target"
     assert final.ray_kwargs.ray_init.runtime_env.env_vars.WANDB_HTTPS_PROXY == "http://127.0.0.1:18881"
+
+
+def test_byted_clears_official_config_and_deduplicates():
+    env = shell_environment({"WANDB_BACKEND": "byted", "WANDB_OFFICIAL": "1",
+                             "WANDB_API_KEY": "test-key", "WANDB_ENTITY": "external",
+                             "WANDB_BASE_URL": "https://api.wandb.ai",
+                             "WANDB_HTTPS_PROXY": "http://127.0.0.1:18881",
+                             "no_proxy": ".internal"})
+    assert env["WANDB_OFFICIAL"] == "0"
+    assert env["WANDB_BACKEND"] == "byted"
+    assert not {"WANDB_API_KEY", "WANDB_ENTITY", "WANDB_BASE_URL", "WANDB_HTTPS_PROXY"} & env.keys()
+    entries = env["no_proxy"].split(",")
+    assert len(entries) == len(set(entries))
+    assert {".internal", ".byted.org", ".bytedance.net"} <= set(entries)
+
+
+def test_byted_preflight_uses_tracking_api(monkeypatch):
+    import sys
+    calls = []
+    reads = []
+    sleeps = []
+    monkeypatch.setattr(preflight.time, "sleep", sleeps.append)
+
+    class Run:
+        id = "test-run"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def log(self, values, step):
+            calls.append((values, step))
+
+    class Api:
+        def run(self, project, run_id):
+            assert (project, run_id) == ("test-project", "test-run")
+            def scan_history(name):
+                reads.append(name)
+                return {name[0]: [1]} if len(reads) == 8 else {}
+            return SimpleNamespace(link="internal-test-link", scan_history=scan_history)
+
+    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(
+        __version__="0.14.10", init=lambda **kwargs: Run(), TrackingApi=Api))
+    config = OmegaConf.create({"trainer": {"project_name": "test-project", "experiment_name": "test"}})
+    preflight.check_write(config, {"WANDB_BACKEND": "byted"})
+    assert calls == [({"preflight/write": 1}, 0)]
+    assert sleeps == [2] * 7
